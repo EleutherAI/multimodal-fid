@@ -1,0 +1,15 @@
+name: t2ig
+channels:
+  - pytorch
+  - huggingface
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.9
+  - pip>=20
+  - pytorch>=1.10
+  - transformers
+  - datasets
+  - numpy
+  - pip:
+    - ./clean-fid
