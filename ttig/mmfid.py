@@ -1,10 +1,12 @@
+from email.mime import image
 from cleanfid.fid import frechet_distance, get_batch_features
 import numpy as np
 import os
 import torch
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
-from ttig.dataset import TextImageDataset
+from ttig.dataset import build_resizer, TextImageDataset
+from ttig.sentence_transformer import build_tokenizer
 from typing import Tuple
 
 
@@ -20,9 +22,6 @@ def feats_to_stats(features):
     mu = np.mean(features, axis=0)
     sigma = np.cov(features, rowvar=False)
     return mu, sigma
-
-
-
 
 
 def calculate_features_from_generator(mumo_model, data_generator):
@@ -47,11 +46,11 @@ def calculate_features_from_generator(mumo_model, data_generator):
     return feats_to_stats(features)
 
 
-def make_folder_generator(folder_fp, batch_size):
+def make_folder_generator(folder_fp, batch_size, image_size=(256, 256), tokenizer=None):
     dataset = TextImageDataset(
         folder_fp,
-        lambda x: x, # TODO: Add image resizing
-        lambda x: x
+        build_resizer(image_size),
+        tokenizer if tokenizer is not None else build_tokenizer()
     )
     return DataLoader(
         dataset,

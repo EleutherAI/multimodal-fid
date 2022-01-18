@@ -1,5 +1,5 @@
 import torch
-from transformers import AutoModel
+from transformers import AutoModel, AutoTokenizer
 
 
 MODEL_PATH = 'sentence-transformers/all-roberta-large-v1'
@@ -8,6 +8,10 @@ MODEL_PATH = 'sentence-transformers/all-roberta-large-v1'
 def mean_pooling(model_output):
     token_embeddings = model_output[0]
     return torch.mean(token_embeddings, 1)
+
+
+def build_tokenizer():
+    return AutoTokenizer.from_pretrained(MODEL_PATH)
 
 
 class SentenceTransformer(torch.nn.Module):

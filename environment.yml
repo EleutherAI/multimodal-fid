@@ -13,3 +13,4 @@ dependencies:
   - numpy
   - pip:
     - ./clean-fid
+    - typer

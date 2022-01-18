@@ -1,12 +1,18 @@
-from torch.utils.data import Dataset
+from cleanfid.resize import make_resizer
 from pathlib import Path
 from PIL import Image
+from torch.utils.data import Dataset
+from typing import Callable, Tuple
+
+
+def build_resizer(size: Tuple[int, int]):
+    return make_resizer("PIL", False, "bicubic", size)
 
 
 class TextImageDataset(Dataset):
     """ImageDataset is a pytorch Dataset exposing image and text tensors from a folder of image and text"""
     
-    def __init__(self, folder, preprocess_image_fn, preprocess_text_fn):
+    def __init__(self, folder: str, preprocess_image_fn: Callable, preprocess_text_fn: Callable):
         super().__init__()
         path = Path(folder)
         text_files = [*path.glob("**/*.txt")]
