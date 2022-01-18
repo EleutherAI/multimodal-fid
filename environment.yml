@@ -11,6 +11,7 @@ dependencies:
   - transformers
   - datasets
   - numpy
+  - opencv
   - pip:
     - ./clean-fid
     - typer
