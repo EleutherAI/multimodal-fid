@@ -1,10 +1,10 @@
-from cleanfid.fid import frechet_distance
+# from cleanfid.fid import frechet_distance
 import numpy as np
 import os
 import torch
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-from ttig.dataset import build_resizer, TextImageDataset
+from ttig.dataset import build_resizer, build_webdataset, SliceDataset
 from ttig.sentence_transformer import build_tokenizer
 from typing import Optional, Tuple
 
@@ -30,13 +30,12 @@ def calculate_features_from_generator(mumo_model, data_generator):
     :data_generator
     :returns 
     """
-    device = mumo_model.device
     data_features = []
     for batch in tqdm(data_generator):
         images, texts = batch
         with torch.no_grad():
             data_features.append(
-                mumo_model(texts.to(device), images.to(device))
+                mumo_model(texts.to('cuda'), images.to('cuda'))
                 .detach()
                 .cpu()
                 .numpy()
@@ -46,16 +45,22 @@ def calculate_features_from_generator(mumo_model, data_generator):
 
 
 def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = None, image_size=(256, 256), tokenizer=None):
-    dataset = TextImageDataset(
+    dataset = build_webdataset(
         folder_fp,
         build_resizer(image_size),
         tokenizer if tokenizer is not None else build_tokenizer()
     )
+    dataset = (
+        dataset
+        .shuffle(1000)
+        .batch(batch_size)
+    )
+    if num_samples is not None:
+        dataset = SliceDataset(dataset, num_samples)
     return DataLoader(
         dataset,
-        batch_size=batch_size,
-        sampler=RandomSampler(dataset),
-        num_samples=num_samples
+        batch_size=None,
+        pin_memory=True
     )
 
 

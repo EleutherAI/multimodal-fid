@@ -1,7 +1,7 @@
 from cleanfid.resize import make_resizer
 from pathlib import Path
 from PIL import Image
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, IterableDataset
 from typing import Callable, Tuple
 import webdataset as wds
 
@@ -20,6 +20,20 @@ def build_webdataset(data_fp: str, image_preprocess_fn: Callable, text_preproces
         .map_tuple(image_preprocess_fn, text_preprocess_fn)
     )
     return data
+
+
+class SliceDataset(IterableDataset):
+
+    def __init__(self, data_generator, num_samples):
+        super().__init__()
+        self.data_generator = data_generator
+        self.num_samples = num_samples
+    
+    def __iter__(self):
+        for i, data in enumerate(self.data_generator):
+            if i < self.num_samples:
+                yield data
+
 
 
 class MuMoFolderDataset(Dataset):

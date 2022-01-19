@@ -21,6 +21,7 @@ def mmfid():
 @app.command()
 def calc_stats(name: str, folder_fp: str, num_samples: int = 500_000, batch_size: int = 128):
     model = MultiModalFeatureExtractor()
+    model.to('cuda')
     return make_reference_statistics(
         name,
         model,
