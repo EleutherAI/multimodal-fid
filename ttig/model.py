@@ -7,6 +7,7 @@ from typing import Optional
 class MultiModalFeatureExtractor(torch.nn.Module):
 
     def __init__(self, image_model_name: str = 'clean', text_model_path: Optional[str] = None):
+        super().__init__()
         self.image_model = build_feature_extractor(image_model_name)
         self.text_model = SentenceTransformer(text_model_path)
     

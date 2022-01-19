@@ -19,7 +19,7 @@ class SentenceTransformer(torch.nn.Module):
     def __init__(self, model_path=None):
         super().__init__()
         self.model_path = model_path if model_path else MODEL_PATH
-        self.transformer = AutoModel.from_pretrained(model_path)
+        self.transformer = AutoModel.from_pretrained(self.model_path)
     
     def forward(self, batch):
         return mean_pooling(self.transformer(batch))
