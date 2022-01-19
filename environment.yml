@@ -12,7 +12,8 @@ dependencies:
   - datasets
   - numpy
   - opencv
+  - pytest
   - pip:
-    - ./clean-fid
+    - -e ./clean-fid
     - typer
     - webdataset

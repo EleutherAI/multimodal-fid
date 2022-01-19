@@ -3,13 +3,26 @@ from pathlib import Path
 from PIL import Image
 from torch.utils.data import Dataset
 from typing import Callable, Tuple
+import webdataset as wds
 
 
 def build_resizer(size: Tuple[int, int]):
     return make_resizer("PIL", False, "bicubic", size)
 
 
-class TextImageDataset(Dataset):
+def build_webdataset(data_fp: str, image_preprocess_fn: Callable, text_preprocess_fn: Callable):
+    data_dir = Path(data_fp)
+    assert data_dir.is_dir()
+    data = (
+        wds.WebDataset([str(file) for file in data_dir.glob('*.tar')])
+        .decode('pil')
+        .to_tuple('jpg;png', 'txt')
+        .map_tuple(image_preprocess_fn, text_preprocess_fn)
+    )
+    return data
+
+
+class MuMoFolderDataset(Dataset):
     """ImageDataset is a pytorch Dataset exposing image and text tensors from a folder of image and text"""
     
     def __init__(self, folder: str, preprocess_image_fn: Callable, preprocess_text_fn: Callable):
