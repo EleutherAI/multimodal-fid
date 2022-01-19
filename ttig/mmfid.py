@@ -1,4 +1,3 @@
-from email.mime import image
 from cleanfid.fid import frechet_distance, get_batch_features
 import numpy as np
 import os
@@ -71,7 +70,7 @@ def load_reference_statistics(name: str) -> MmfidStats:
 def make_reference_statistics(name: str, model, folder_fp: str, num_samples: int, batch_size: int) -> None:
     """
 
-    :name
+    :name str  Name of the 
     :model
     :folder_fp
     :num_samples

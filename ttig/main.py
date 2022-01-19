@@ -10,7 +10,6 @@ def mmfid():
     pass
 
 
-
 @app.command()
 def calc_stats(name: str, folder_fp: str, num_samples: int = 500_000, batch_size: int = 128):
     model = MultiModalFeatureExtractor()
@@ -25,5 +24,3 @@ def calc_stats(name: str, folder_fp: str, num_samples: int = 500_000, batch_size
 
 if __name__ == '__main__':
     app()
-
-
