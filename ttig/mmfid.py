@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from ttig.dataset import build_resizer, build_webdataset, SliceDataset
 from ttig.sentence_transformer import build_tokenizer
+from torchvision.transforms import ToTensor, Compose
 from typing import Optional, Tuple
 
 
@@ -45,9 +46,10 @@ def calculate_features_from_generator(mumo_model, data_generator):
 
 
 def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = None, image_size=(256, 256), tokenizer=None):
+    image_fn = Compose(build_resizer(image_size), ToTensor())
     dataset = build_webdataset(
         folder_fp,
-        build_resizer(image_size),
+        image_fn,
         tokenizer if tokenizer is not None else build_tokenizer()
     )
     dataset = (

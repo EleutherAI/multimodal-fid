@@ -13,7 +13,6 @@ sys.path.append(test_dir) # fucking cursed
 from ttig.dataset import build_webdataset
 
 
-
 def test_webdataset():
 
     def ident(x):

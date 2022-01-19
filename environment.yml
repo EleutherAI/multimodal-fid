@@ -8,6 +8,7 @@ dependencies:
   - python>=3.9
   - pip>=20
   - pytorch>=1.10
+  - torchvision
   - transformers
   - datasets
   - numpy
