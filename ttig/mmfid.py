@@ -46,7 +46,7 @@ def calculate_features_from_generator(mumo_model, data_generator):
 
 
 def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = None, image_size=(256, 256), tokenizer=None):
-    image_fn = Compose(build_resizer(image_size), ToTensor())
+    image_fn = Compose([build_resizer(image_size), ToTensor()])
     dataset = build_webdataset(
         folder_fp,
         image_fn,
