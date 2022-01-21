@@ -55,7 +55,7 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
     dataset = dataset.shuffle(1000)
     if num_samples is not None:
         dataset = dataset.slice(num_samples)
-    dataset = dataset.batch(batch_size)
+    dataset = dataset.batched(batch_size)
     return DataLoader(
         dataset,
         batch_size=None,
