@@ -22,20 +22,6 @@ def build_webdataset(data_fp: str, image_preprocess_fn: Callable, text_preproces
     return data
 
 
-class SliceDataset(IterableDataset):
-
-    def __init__(self, data_generator, num_samples):
-        super().__init__()
-        self.data_generator = data_generator
-        self.num_samples = num_samples
-    
-    def __iter__(self):
-        for i, data in enumerate(self.data_generator):
-            if i < self.num_samples:
-                yield data
-
-
-
 class MuMoFolderDataset(Dataset):
     """ImageDataset is a pytorch Dataset exposing image and text tensors from a folder of image and text"""
     

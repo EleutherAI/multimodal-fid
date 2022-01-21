@@ -4,7 +4,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from ttig.dataset import build_resizer, build_webdataset, SliceDataset
+from ttig.dataset import build_resizer, build_webdataset
 from ttig.sentence_transformer import build_tokenizer
 from torchvision.transforms import ToTensor, Compose
 from typing import Optional, Tuple
@@ -52,13 +52,10 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
         image_fn,
         tokenizer if tokenizer is not None else build_tokenizer()
     )
-    dataset = (
-        dataset
-        .shuffle(1000)
-        .batch(batch_size)
-    )
+    dataset = dataset.shuffle(1000)
     if num_samples is not None:
-        dataset = SliceDataset(dataset, num_samples)
+        dataset = dataset.slice(num_samples)
+    dataset = dataset.batch(batch_size)
     return DataLoader(
         dataset,
         batch_size=None,
