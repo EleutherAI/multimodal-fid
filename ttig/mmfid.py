@@ -34,6 +34,7 @@ def calculate_features_from_generator(mumo_model, data_generator):
     data_features = []
     for batch in tqdm(data_generator):
         images, texts = batch
+        texts = torch.concat(texts, dim=0)
         with torch.no_grad():
             data_features.append(
                 mumo_model(texts.to('cuda'), images.to('cuda'))
@@ -46,7 +47,9 @@ def calculate_features_from_generator(mumo_model, data_generator):
 
 
 def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = None, image_size=(256, 256), tokenizer=None):
-    image_fn = Compose([build_resizer(image_size), ToTensor()])
+    # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
+    # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
+    image_fn = Compose([np.asarray, build_resizer(image_size), ToTensor()])
     dataset = build_webdataset(
         folder_fp,
         image_fn,
