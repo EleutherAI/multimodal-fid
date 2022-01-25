@@ -34,7 +34,6 @@ def calculate_features_from_generator(mumo_model, data_generator):
     data_features = []
     for batch in tqdm(data_generator):
         images, texts = batch
-        texts = torch.concat(texts, dim=0)
         with torch.no_grad():
             data_features.append(
                 mumo_model(texts.to('cuda'), images.to('cuda'))
