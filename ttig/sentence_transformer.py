@@ -44,4 +44,4 @@ class SentenceTransformer(torch.nn.Module):
         self.transformer = AutoModel.from_pretrained(self.model_path)
     
     def forward(self, batch):
-        return mean_pooling(self.transformer(batch))
+        return mean_pooling(self.transformer(**batch))

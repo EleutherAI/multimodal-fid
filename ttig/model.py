@@ -13,5 +13,5 @@ class MultiModalFeatureExtractor(torch.nn.Module):
     
     def forward(self, texts, images):
         image_features = self.image_model(images)
-        text_features = self.text_model(**texts)
+        text_features = self.text_model(texts)
         return torch.concat([image_features, text_features], dim=1)
