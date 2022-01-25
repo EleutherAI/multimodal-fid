@@ -6,6 +6,12 @@ from typing import Any, Dict, List
 MODEL_PATH = 'sentence-transformers/all-roberta-large-v1'
 
 
+def encoding_to_cuda(texts):
+    return {
+        key: value.to('cuda') for key, value in texts.items()
+    }
+
+
 def batch_tokens(data: List[Dict[str, Any]]):
     if len(data) == 0:
         return {}
