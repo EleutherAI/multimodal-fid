@@ -50,15 +50,20 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
     # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
     # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
     image_fn = Compose([np.asarray, build_resizer(image_size), ToTensor()])
+    tokenizer = tokenizer if tokenizer is not None else build_tokenizer()
+    def ident(x):
+        return x
     dataset = build_webdataset(
         folder_fp,
         image_fn,
-        tokenizer if tokenizer is not None else build_tokenizer()
+        ident
     )
     dataset = dataset.shuffle(1000)
     if num_samples is not None:
         dataset = dataset.slice(num_samples)
-    dataset = dataset.batched(batch_size)
+    dataset = dataset.batched(batch_size).map_tuple(
+        ident, 
+        lambda sents: tokenizer(sents, padding='longest', truncation=True, return_tensors='pt'))
     return DataLoader(
         dataset,
         batch_size=None,

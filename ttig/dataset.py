@@ -1,8 +1,8 @@
 from cleanfid.resize import make_resizer
 from pathlib import Path
 from PIL import Image
-from torch.utils.data import Dataset, IterableDataset
-from typing import Callable, Tuple
+from torch.utils.data import Dataset
+from typing import Any, Callable, Tuple
 import webdataset as wds
 
 

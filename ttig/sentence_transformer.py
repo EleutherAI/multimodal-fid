@@ -1,8 +1,24 @@
 import torch
 from transformers import AutoModel, AutoTokenizer
+from typing import Any, Dict, List
 
 
 MODEL_PATH = 'sentence-transformers/all-roberta-large-v1'
+
+
+def batch_tokens(data: List[Dict[str, Any]]):
+    if len(data) == 0:
+        return {}
+    batch = {key: [] for key in data[0].keys()}
+    for text in data:
+        for key, value in batch.items():
+            try:
+                value.append(torch.as_tensor(text[key]).unsqueeze(0))
+            except KeyError as ke:
+                raise ValueError('Not all dictionaries passed in had the same keys.') from ke
+    return {
+        key: torch.concat(value, dim=0) for key, value in batch.items()
+    }
 
 
 def mean_pooling(model_output):
