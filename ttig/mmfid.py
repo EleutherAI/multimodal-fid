@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from ttig.dataset import build_resizer, build_webdataset
-from ttig.sentence_transformer import build_tokenizer
+from ttig.sentence_transformer import build_tokenizer, encoding_to_cuda
 from torchvision.transforms import ToTensor, Compose
 from typing import Optional, Tuple
 
@@ -36,7 +36,9 @@ def calculate_features_from_generator(mumo_model, data_generator):
         images, texts = batch
         with torch.no_grad():
             data_features.append(
-                mumo_model(texts.to('cuda'), images.to('cuda'))
+                mumo_model(
+                    encoding_to_cuda(texts),
+                    images.to('cuda'))
                 .detach()
                 .cpu()
                 .numpy()
