@@ -47,7 +47,7 @@ def calculate_features_from_generator(mumo_model, data_generator):
     return feats_to_stats(features)
 
 
-def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = None, image_size=(256, 256), tokenizer=None):
+def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = None, image_size=(299, 299), tokenizer=None):
     # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
     # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
     image_fn = Compose([np.asarray, build_resizer(image_size), ToTensor()])
