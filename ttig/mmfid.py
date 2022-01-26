@@ -44,7 +44,10 @@ def calculate_features_from_generator(mumo_model, data_generator):
                 .cpu()
                 .numpy()
             )
+    print(len(data_features))
+    print(data_features[0].shape)
     features = np.concatenate(data_features)
+    print(features.shape)
     return feats_to_stats(features)
 
 
@@ -102,7 +105,6 @@ def make_reference_statistics(name: str, model, folder_fp: str, num_samples: int
     # get all inception features for folder images
     data_gen = make_folder_generator(folder_fp, batch_size, num_samples)
     features = calculate_features_from_generator(model, data_gen)
-    print(features.shape)
     mu, sigma = feats_to_stats(features)
     print(f"saving custom FID stats to {outf}")
     np.savez_compressed(outf, mu=mu, sigma=sigma)
