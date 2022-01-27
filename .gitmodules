@@ -1,3 +1,12 @@
 [submodule "clean-fid"]
 	path = clean-fid
 	url = git@github.com:GaParmar/clean-fid.git
+[submodule "vqgan-clip"]
+	path = vqgan-clip
+	url = git@github.com:dashstander/vqgan-clip.git
+[submodule "CLIP"]
+	path = CLIP
+	url = https://github.com/openai/CLIP
+[submodule "taming-transformers"]
+	path = taming-transformers
+	url = https://github.com/CompVis/taming-transformers/

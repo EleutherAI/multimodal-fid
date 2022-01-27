@@ -2,7 +2,7 @@
 name = "ttig"
 version = "0.1.0"
 description = ""
-authors = ["Stella Bidderman", "Katherine Crowson", "Dashiell Stander <dash.stander@gmail.com>"]
+authors = ["Stella Biderman", "Katherine Crowson", "Dashiell Stander <dash.stander@gmail.com>"]
 license = "MIT"
 
 [tool.poetry.dependencies]

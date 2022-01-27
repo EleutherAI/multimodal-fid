@@ -11,10 +11,23 @@ dependencies:
   - torchvision
   - transformers
   - datasets
+  - kornia
+  - torch-optimizer
   - numpy
   - opencv
   - pytest
   - pip:
-    - -e ./clean-fid
+    - ./clean-fid
+    - ./vqgan-clip
+    - ./CLIP
+    - ./taming-transformers
+    - albumentations==0.4.3
+    - pudb==2019.2
+    - imageio==2.9.0
+    - imageio-ffmpeg==0.4.2
+    - omegaconf==2.0.0
+    - test-tube>=0.7.5
+    - einops==0.3.0
+    - more-itertools>=8.0.0
     - typer
     - webdataset
