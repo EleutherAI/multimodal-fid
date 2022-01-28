@@ -9,6 +9,12 @@ __pycache__/
 .vscode
 .idea
 
+checkpoints/
+vqgan-clip/build
+CLIP/build
+taming-transformers/taming_transformers.egg-info
+
+
 # Distribution / packaging
 .Python
 build/
