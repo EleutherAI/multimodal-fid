@@ -114,7 +114,6 @@ class VqGanCLIPGenerator(nn.Module):
         result = []
         for prompt in prompts:
             result.append(prompt(iii).unsqueeze(0)) # WHERE THE MAGIC HAPPENS
-        print(result)
         return torch.concat(result).sum() # return loss        
 
     def generate(self, texts):
