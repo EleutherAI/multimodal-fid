@@ -113,9 +113,9 @@ class VqGanCLIPGenerator(nn.Module):
         iii = self.clip.encode_image(self.normalize(self.make_cutouts(out))).float() # Encode most recent image
         result = []
         for prompt in prompts:
-            result.append(prompt(iii)) # WHERE THE MAGIC HAPPENS
+            result.append(prompt(iii).unsqueeze(0)) # WHERE THE MAGIC HAPPENS
         print(result)
-        return torch.as_tensor(result).sum() # return loss        
+        return torch.concat(result).sum() # return loss        
 
     def generate(self, texts):
         if isinstance(texts, str):
