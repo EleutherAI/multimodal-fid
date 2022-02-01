@@ -154,5 +154,6 @@ class VqGanCLIPGenerator(nn.Module):
             
             #with torch.no_grad():
             with torch.inference_mode():
-                z.copy_(z.maximum(z_min).minimum(z_max))   
-        return z
+                z.copy_(z.maximum(z_min).minimum(z_max))  
+             
+        return self.generate_image(z)
