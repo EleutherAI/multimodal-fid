@@ -110,10 +110,11 @@ class VqGanCLIPGenerator(nn.Module):
 
     def update_step(self, z, prompts):
         out = self.generate_image(z)
-        iii = self.clip.encode_image(self.normalize(self.make_cutouts(out))).float()
+        iii = self.clip.encode_image(self.normalize(self.make_cutouts(out))).float() # Encode most recent image
         result = []
         for prompt in prompts:
             result.append(prompt(iii)) # WHERE THE MAGIC HAPPENS
+        print(result)
         return torch.concat(result).sum() # return loss        
 
     def generate(self, texts):
