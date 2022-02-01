@@ -16,6 +16,7 @@ from vqgan_clip.inits import random_noise_image, random_gradient_image
 
 
 class Prompt(nn.Module):
+    # TODO: I don't like this because it isn't vectorized, which we would like for our use case.
     def __init__(self, embed, weight=1., stop=float('-inf')):
         super().__init__()
         self.register_buffer('embed', embed)
@@ -115,7 +116,9 @@ class VqGanCLIPGenerator(nn.Module):
             result.append(prompt(iii)) # WHERE THE MAGIC HAPPENS
         return torch.concat(result).sum() # return loss        
 
-    def generate(self, prompts):
+    def generate(self, texts):
+        if isinstance(texts, str):
+            texts = [texts]
         f = 2**(self.vqgan.decoder.num_resolutions - 1)
         toksX, toksY = self.config.size[0] // f, self.config.size[1] // f
         sideX, sideY = toksX * f, toksY * f
@@ -135,8 +138,8 @@ class VqGanCLIPGenerator(nn.Module):
 
         # CLIP tokenize/encode
         # TODO: Figure out whether this is for multiple-prompts-but-one-image or a batch of images
-        for prompt in prompts:
-            embed = self.clip.encode_text(clip.tokenize(prompt).to(self.device)).float()
+        for text in texts:
+            embed = self.clip.encode_text(clip.tokenize(text).to(self.device)).float()
             prompts.append(Prompt(embed).to(self.device))
 
         # Set the optimiser
