@@ -2,7 +2,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 from omegaconf import OmegaConf
 from taming.models.vqgan import VQModel
-from typing import Optional
+from typing import List, Optional, Tuple
 from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
 
 
@@ -11,8 +11,19 @@ class VQGANConfig:
     num_cuts: int = 32
     num_iterations: int = 500
     cut_method: str = 'latest' # other option is 'original'
+    cut_pow: float = 1.0
     learning_rate: float = 0.1
     init_noise: Optional[str] = None
+    augments: Optional[List] = None
+    size: Tuple[int] = (256, 256)
+    step_size: float = 0.1
+    max_iterations: int = 500
+
+    
+    def __post_init__(self):
+        if self.augments is None:
+            # TODO: Make this more readable
+            self.augments = ['Hf','Af', 'Pe', 'Ji', 'Er'] # *sigh*
 
 
 def load_vqgan_model(checkpoint_path: str, config_path: str):

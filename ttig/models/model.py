@@ -1,7 +1,7 @@
 from cleanfid.features import build_feature_extractor
 import clip
 from PIL import Image
-from sentence_transformer import SentenceTransformer
+from ttig.models.sentence_transformer import SentenceTransformer
 import torch
 from torch.nn.functional import normalize, one_hot
 from torch import nn, optim
@@ -50,7 +50,7 @@ class VqGanCLIPGenerator(nn.Module):
 
     def __init__(self, checkpoint_path, model_config_path, config, clip_model_type='', device='cuda'):
         super().__init__()
-        self.vqgan = load_vqgan_model(checkpoint_path, model_config_path)
+        self.vqgan = load_vqgan_model(checkpoint_path, model_config_path).to(device)
         self.clip = clip.load(clip_model_type)[0].eval().requires_grad_(False).to(device)
         self.device = device
         self.config = config
@@ -67,12 +67,12 @@ class VqGanCLIPGenerator(nn.Module):
         )
     
     @staticmethod
-    def replace_grad(x):
-        return ReplaceGrad.apply(x)
+    def replace_grad(x, y):
+        return ReplaceGrad.apply(x, y)
 
     @staticmethod
-    def clamp_with_grad(x):
-        return ClampWithGrad.apply(x)
+    def clamp_with_grad(x, y, z):
+        return ClampWithGrad.apply(x, y, z)
 
     def random_image(self, rand_im_type, size, side_x, side_y):
         if rand_im_type == 'pixels':
@@ -113,7 +113,7 @@ class VqGanCLIPGenerator(nn.Module):
         result = []
         for prompt in prompts:
             result.append(prompt(iii)) # WHERE THE MAGIC HAPPENS
-        return result # return loss        
+        return torch.concat(result).sum() # return loss        
 
     def generate(self, prompts):
         f = 2**(self.vqgan.decoder.num_resolutions - 1)
@@ -145,8 +145,7 @@ class VqGanCLIPGenerator(nn.Module):
         for _ in tqdm(range(self.config.max_iterations)):
             # Change text prompt
             opt.zero_grad(set_to_none=True)
-            lossAll = self.update_step(z, prompts)
-            loss = sum(lossAll)
+            loss = self.update_step(z, prompts)
             loss.backward()
             opt.step()
             

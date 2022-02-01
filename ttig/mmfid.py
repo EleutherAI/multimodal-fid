@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from ttig.dataset import build_resizer, build_webdataset
-from ttig.sentence_transformer import build_tokenizer, encoding_to_cuda
+from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
 from torchvision.transforms import ToTensor, Compose
 from typing import Optional, Tuple
 
