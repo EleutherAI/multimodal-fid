@@ -15,20 +15,26 @@ from vqgan_clip.grad import ReplaceGrad, ClampWithGrad
 from vqgan_clip.inits import random_noise_image, random_gradient_image
 
 
-class Prompt(nn.Module):
-    # TODO: I don't like this because it isn't vectorized, which we would like for our use case.
-    def __init__(self, embed, weight=1., stop=float('-inf')):
-        super().__init__()
-        self.register_buffer('embed', embed)
-        self.register_buffer('weight', torch.as_tensor(weight))
-        self.register_buffer('stop', torch.as_tensor(stop))
+def spherical_dist_loss(x, y):
+    x = normalize(x, dim=-1)
+    y = normalize(y, dim=-1)
+    return (x - y).norm(dim=-1).div(2).arcsin().pow(2).mul(2)
 
-    def forward(self, input):
-        input_normed = normalize(input.unsqueeze(1), dim=2)
-        embed_normed = normalize(self.embed.unsqueeze(0), dim=2)
-        dists = input_normed.sub(embed_normed).norm(dim=2).div(2).arcsin().pow(2).mul(2)
-        dists = dists * self.weight.sign()
-        return self.weight.abs() * ReplaceGrad.apply(dists, torch.maximum(dists, self.stop)).mean()
+
+# class Prompt(nn.Module):
+    # TODO: I don't like this because it isn't vectorized, which we would like for our use case.
+#    def __init__(self, embed, weight=1., stop=float('-inf')):
+#        super().__init__()
+#        self.register_buffer('embed', embed)
+#        self.register_buffer('weight', torch.as_tensor(weight))
+#        self.register_buffer('stop', torch.as_tensor(stop))
+
+#    def forward(self, input):
+#        input_normed = normalize(input.unsqueeze(1), dim=2)
+#        embed_normed = normalize(self.embed.unsqueeze(0), dim=2)
+#        dists = input_normed.sub(embed_normed).norm(dim=2).div(2).arcsin().pow(2).mul(2)
+#        dists = dists * self.weight.sign()
+#        return self.weight.abs() * ReplaceGrad.apply(dists, torch.maximum(dists, self.stop)).mean()
 
 
 class MultiModalFeatureExtractor(nn.Module):
@@ -110,10 +116,8 @@ class VqGanCLIPGenerator(nn.Module):
 
     def update_step(self, z, prompts):
         out = self.generate_image(z)
-        iii = self.clip.encode_image(self.normalize(self.make_cutouts(out))).float() # Encode most recent image
-        result = []
-        for prompt in prompts:
-            result.append(prompt(iii).unsqueeze(0)) # WHERE THE MAGIC HAPPENS
+        image_encodings = self.clip.encode_image(self.normalize(self.make_cutouts(out))).float() # Encode most recent image
+        dists = spherical_dist_loss(image_encodings, prompts)
         return torch.concat(result).sum() # return loss        
 
     def generate(self, texts):
@@ -138,9 +142,9 @@ class VqGanCLIPGenerator(nn.Module):
 
         # CLIP tokenize/encode
         # TODO: Figure out whether this is for multiple-prompts-but-one-image or a batch of images
-        for text in texts:
-            embed = self.clip.encode_text(clip.tokenize(text).to(self.device)).float()
-            prompts.append(Prompt(embed).to(self.device))
+        
+        prompts = self.clip.encode_text(clip.tokenize(texts).to(self.device)).float()
+        #prompts.append(Prompt(embed).to(self.device))
 
         # Set the optimiser
         opt = optim.AdamW([z], lr=self.config.step_size)
@@ -154,6 +158,5 @@ class VqGanCLIPGenerator(nn.Module):
             
             #with torch.no_grad():
             with torch.inference_mode():
-                z.copy_(z.maximum(z_min).minimum(z_max))  
-             
+                z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
         return self.generate_image(z)
