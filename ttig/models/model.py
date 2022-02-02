@@ -9,16 +9,25 @@ from torchvision.transforms import functional as tf
 from torchvision import transforms
 from tqdm import tqdm
 from typing import Optional
+from torchtyping import TensorType, patch_typeguard
+from typeguard import typechecked
 
 from ttig.models.vqgan_clip import cutout_factory, load_vqgan_model
 from vqgan_clip.grad import ReplaceGrad, ClampWithGrad
 from vqgan_clip.inits import random_noise_image, random_gradient_image
 
 
-def spherical_dist_loss(x, y):
-    x = normalize(x, dim=-1)
-    y = normalize(y, dim=-1)
-    return (x - y).norm(dim=-1).div(2).arcsin().pow(2).mul(2)
+patch_typeguard()
+
+
+EmbedTensor = TensorType[-1, 'embedding_dim']
+
+
+@typechecked
+def spherical_dist_loss(x: EmbedTensor, y: EmbedTensor) -> TensorType[-1]:
+    x = normalize(x, dim=1)
+    y = normalize(y, dim=1)
+    return (x - y).norm(dim=1).div(2).arcsin().pow(2).mul(2)
 
 
 # class Prompt(nn.Module):
