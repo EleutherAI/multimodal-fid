@@ -1,6 +1,8 @@
 from collections import namedtuple
 from dataclasses import dataclass
+import numpy as np
 from omegaconf import OmegaConf
+from PIL import Image
 from taming.models.vqgan import VQModel
 from typing import List, Optional, Tuple
 from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
@@ -38,7 +40,7 @@ CutoutConfig = namedtuple('CutoutConfig', ['cut_pow', 'augments']) # Fucking cur
 # TODO: refactor vqgan-clip code so that their cutout making class isn't dependent on their command line args....
 
 
-def cutout_factory(cut_method: str, cut_size, num_cuts: int, cut_pow, augments):
+def cutout_factory(cut_method: str, cut_size, num_cuts: int, cut_pow: float, augments: List[str]):
     not_args = CutoutConfig(cut_pow, augments)
     if cut_method == 'original':
         return MakeCutoutsOrig(not_args, cut_size, num_cuts)
