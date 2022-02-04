@@ -31,6 +31,8 @@ ImageTensor = TensorType[-1, 'channels', 'size_x', 'size_y']
 def spherical_dist_loss(x: EmbedTensor, y: EmbedTensor) -> TensorType[-1]:
     x = normalize(x, dim=1)
     y = normalize(y, dim=1)
+    print(f'x shape: {x.shape}')
+    print(f'y shape: {y.shape}')
     return (x - y).norm(dim=1).div(2).arcsin().pow(2).mul(2)
 
 
@@ -104,7 +106,7 @@ def cutout_factory(cut_method: str, cut_size, num_cuts: int, cut_pow: float, aug
         raise ValueError(f'Not recognized cutout-making type {cut_method}')
 
 
-class VqganClipGenerator(nn.Module):
+class VqGanClipGenerator(nn.Module):
 
     def __init__(self, checkpoint_path, model_config_path, config, clip_model_type='', device='cuda'):
         super().__init__()
@@ -174,9 +176,10 @@ class VqganClipGenerator(nn.Module):
         z_q = self.vector_quantize(z.movedim(1, 3)).movedim(3, 1)
         return self.clamp_with_grad(self.vqgan.decode(z_q).add(1).div(2), 0, 1)
 
-    def update_step(self, z: VQCodeTensor, prompts: EmbedTensor):
+    @typechecked
+    def update_step(self, z: VQCodeTensor, prompts: EmbedTensor) -> TensorType[-1]:
         out = self.generate_image(z)
-        image_encodings = self.clip.encode_image(self.normalize(self.make_cutouts(out))).float() # Encode most recent image
+        image_encodings: EmbedTensor = self.clip.encode_image(self.normalize(self.make_cutouts(out))).float() # Encode most recent image
         dists = spherical_dist_loss(image_encodings, prompts)
         return dists # return loss        
 
