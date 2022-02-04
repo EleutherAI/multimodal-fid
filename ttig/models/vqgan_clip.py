@@ -30,8 +30,8 @@ ImageTensor = TensorType[-1, 'channels', 'size_x', 'size_y']
 
 @typechecked
 def spherical_dist_loss(
-    x: TensorType['num_cuts', 'batch', 'embedding_dim'], # One embedding per cut per image in the batch
-    y: TensorType[-1, 'batch', 'embedding_dim'] # One embedding for the prompt, extra empty for the number of cuts
+    x, # One embedding per cut per image in the batch
+    y # One embedding for the prompt, extra empty for the number of cuts
 ) -> TensorType[-1]:
     x = normalize(x, dim=1)
     y = normalize(y, dim=1)
@@ -232,8 +232,3 @@ class VqGanClipGenerator(nn.Module):
             with torch.inference_mode():
                 z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
         return self.generate_image(z)
-
-
-
-
-
