@@ -184,10 +184,8 @@ class VqGanClipGenerator(nn.Module):
     def update_step(self, z: VQCodeTensor, prompts: EmbedTensor) -> TensorType[-1]:
         out = self.generate_image(z)
         image_encodings: EmbedTensor = self.clip.encode_image(
-            self.normalize(
-                self.make_cutouts(out)
-            )
-        ).view(self.config.num_cuts, out.size[0], -1)
+            self.normalize(self.make_cutouts(out))
+        ).view([self.config.num_cuts, out.size[0], -1])
         dists = spherical_dist_loss(image_encodings, prompts[None])
         return dists # return loss
 
