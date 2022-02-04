@@ -186,7 +186,7 @@ class VqGanClipGenerator(nn.Module):
         ).float()
         print(image_encodings.shape)
         dists = spherical_dist_loss(
-            image_encodings.view([self.config.num_cuts, out.size[0], -1]),
+            image_encodings.view([self.config.num_cuts, out.shape[0], -1]),
             prompts[None]
         )
         return dists # return loss
