@@ -1,8 +1,6 @@
 from collections import namedtuple
 from dataclasses import dataclass
-import numpy as np
 from omegaconf import OmegaConf
-from PIL import Image
 from taming.models.vqgan import VQModel
 from typing import List, Optional, Tuple
 from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
