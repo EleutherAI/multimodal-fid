@@ -8,7 +8,7 @@ from torch import nn, optim
 from torchvision.transforms import functional as tf
 from torchvision import transforms
 from tqdm import tqdm
-from typing import Optional
+from typing import Optional, Tuple
 from torchtyping import TensorType, patch_typeguard
 from typeguard import typechecked
 
@@ -73,7 +73,7 @@ class VqGanCLIPGenerator(nn.Module):
     def clamp_with_grad(x, y, z):
         return ClampWithGrad.apply(x, y, z)
 
-    def random_image(self, rand_im_type, size, batch, side_x, side_y):
+    def random_image(self, rand_im_type: str, size: Tuple[int, int], batch, side_x, side_y):
         if rand_im_type == 'pixels':
             images = [random_noise_image(*size) for _ in range(batch)]
         elif rand_im_type == 'gradient':
@@ -81,7 +81,7 @@ class VqGanCLIPGenerator(nn.Module):
         else:
             raise ValueError(f'Unknown random initialization strategy {rand_im_type}')
         pil_images = [
-            tf.to_tensor(im.resize((side_x, side_y), Image.LANCZOS))
+            tf.to_tensor(im.resize((side_x, side_y), Image.LANCZOS)).unsqueeze()
             for im in images
         ]
         pil_tensor = torch.concat(pil_images).to(self.device)
