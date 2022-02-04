@@ -12,9 +12,8 @@ from typing import Optional
 from torchtyping import TensorType, patch_typeguard
 from typeguard import typechecked
 
-from ttig.models.vqgan_clip import cutout_factory, load_vqgan_model
+from ttig.models.vqgan_clip import cutout_factory, load_vqgan_model, random_gradient_image, random_noise_image
 from vqgan_clip.grad import ReplaceGrad, ClampWithGrad
-from vqgan_clip.inits import random_noise_image, random_gradient_image
 
 
 patch_typeguard()
