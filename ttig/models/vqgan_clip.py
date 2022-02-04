@@ -184,7 +184,6 @@ class VqGanClipGenerator(nn.Module):
         image_encodings: EmbedTensor = self.clip.encode_image(
             self.normalize(self.make_cutouts(out))
         ).float()
-        print(image_encodings.shape)
         dists = spherical_dist_loss(
             image_encodings.view([self.config.num_cuts, out.shape[0], -1]),
             prompts[None]
