@@ -23,7 +23,7 @@ patch_typeguard()
 
 
 EmbedTensor = TensorType[-1, 'embedding_dim']
-VQCodeTensor = TensorType[-1, 3, 'code_dim', 'code_dim']
+VQCodeTensor = TensorType[-1, 'code_dim', 'x_tokens', 'y_tokens']
 ImageTensor = TensorType[-1, 'channels', 'size_x', 'size_y']
 
 
