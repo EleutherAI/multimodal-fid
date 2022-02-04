@@ -27,13 +27,17 @@ VQCodeTensor = TensorType[-1, 'code_dim', 'x_tokens', 'y_tokens']
 ImageTensor = TensorType[-1, 'channels', 'size_x', 'size_y']
 
 
+
 @typechecked
-def spherical_dist_loss(x: EmbedTensor, y: EmbedTensor) -> TensorType[-1]:
+def spherical_dist_loss(
+    x: TensorType['num_cuts', 'batch', 'embedding_dim'], # One embedding per cut per image in the batch
+    y: TensorType[-1, 'batch', 'embedding_dim'] # One embedding for the prompt, extra empty for the number of cuts
+) -> TensorType[-1]:
     x = normalize(x, dim=1)
     y = normalize(y, dim=1)
     print(f'x shape: {x.shape}')
     print(f'y shape: {y.shape}')
-    return (x - y).norm(dim=1).div(2).arcsin().pow(2).mul(2)
+    return (x - y).norm(dim=1).div(2).arcsin().pow(2).mul(2).mean(0)
 
 
 def random_noise_image(w,h):
@@ -156,7 +160,7 @@ class VqGanClipGenerator(nn.Module):
         z, *_ = self.vqgan.encode(pil_tensor * 2 - 1)
         return z
 
-    def make_cutouts(self, x):
+    def make_cutouts(self, x: ImageTensor):
         return self.cutout_fn(x)
 
     @property
@@ -179,9 +183,13 @@ class VqGanClipGenerator(nn.Module):
     @typechecked
     def update_step(self, z: VQCodeTensor, prompts: EmbedTensor) -> TensorType[-1]:
         out = self.generate_image(z)
-        image_encodings: EmbedTensor = self.clip.encode_image(self.normalize(self.make_cutouts(out))).float() # Encode most recent image
-        dists = spherical_dist_loss(image_encodings, prompts)
-        return dists # return loss        
+        image_encodings: EmbedTensor = self.clip.encode_image(
+            self.normalize(
+                self.make_cutouts(out)
+            )
+        ).view(self.config.num_cuts, out.size[0], -1)
+        dists = spherical_dist_loss(image_encodings, prompts[None])
+        return dists # return loss
 
     @typechecked
     def generate(self, texts):
