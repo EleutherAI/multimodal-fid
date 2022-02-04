@@ -1,7 +1,8 @@
 from cleanfid.resize import make_resizer
 from pathlib import Path
 from PIL import Image
-from torch.utils.data import Dataset
+import pyarrow.dataset as ds
+from torch.utils.data import Dataset, IterableDataset
 from typing import Any, Callable, Tuple
 import webdataset as wds
 
@@ -20,6 +21,23 @@ def build_webdataset(data_fp: str, image_preprocess_fn: Callable, text_preproces
         .map_tuple(image_preprocess_fn, text_preprocess_fn)
     )
     return data
+
+
+class CoCa3mTextDataset(IterableDataset):
+
+    def __init__(self, folder_fp):
+        super().__init__()
+        self.data = ds.dataset(folder_fp, format='parquet')
+    
+    def __iter__(self):
+        for batch in self.data.to_batches():
+            yield batch
+
+
+
+
+
+
 
 
 class MuMoFolderDataset(Dataset):

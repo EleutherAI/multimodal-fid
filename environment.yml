@@ -14,6 +14,7 @@ dependencies:
   - kornia
   - torch-optimizer
   - numpy
+  - pyarrow
   - opencv
   - pytest
   - pip:
