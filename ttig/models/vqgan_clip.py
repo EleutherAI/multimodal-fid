@@ -188,7 +188,7 @@ class VqGanClipGenerator(nn.Module):
             image_encodings.view([self.config.num_cuts, out.shape[0], -1]),
             prompts[None]
         )
-        return dists # return loss
+        return dists.sum() # return loss
 
     @typechecked
     def generate(self, texts):
