@@ -1,6 +1,5 @@
 
 from os.path import dirname, abspath, join
-import sys
 import torch
 from ttig.models.model import spherical_dist_loss, VqGanCLIPGenerator
 
@@ -20,9 +19,4 @@ def test_spherical_dist_loss():
     x = torch.randn((10, 5))
     y = torch.randn((10, 5))
     assert spherical_dist_loss(x, y).shape == (10,)
-
-
-def test_random_image():
-
-    vqgan = VqGanCLIPGenerator()
 
