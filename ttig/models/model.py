@@ -81,7 +81,7 @@ class VqGanCLIPGenerator(nn.Module):
         else:
             raise ValueError(f'Unknown random initialization strategy {rand_im_type}')
         pil_images = [
-            tf.to_tensor(im.resize((side_x, side_y), Image.LANCZOS)).unsqueeze()
+            tf.to_tensor(im.resize((side_x, side_y), Image.LANCZOS)).unsqueeze(0)
             for im in images
         ]
         pil_tensor = torch.concat(pil_images).to(self.device)
