@@ -35,8 +35,6 @@ def spherical_dist_loss(
 ) -> TensorType[-1]:
     x = normalize(x, dim=1)
     y = normalize(y, dim=1)
-    print(f'x shape: {x.shape}')
-    print(f'y shape: {y.shape}')
     return (x - y).norm(dim=1).div(2).arcsin().pow(2).mul(2).mean(0)
 
 
@@ -185,7 +183,8 @@ class VqGanClipGenerator(nn.Module):
         out = self.generate_image(z)
         image_encodings: EmbedTensor = self.clip.encode_image(
             self.normalize(self.make_cutouts(out))
-        )
+        ).float()
+        print(image_encodings.shape)
         dists = spherical_dist_loss(
             image_encodings.view([self.config.num_cuts, out.size[0], -1]),
             prompts[None]
