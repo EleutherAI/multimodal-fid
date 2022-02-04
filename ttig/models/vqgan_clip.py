@@ -188,7 +188,7 @@ class VqGanClipGenerator(nn.Module):
             image_encodings.view([self.config.num_cuts, out.shape[0], -1]),
             prompts[None]
         )
-        return dists.sum() # return loss
+        return dists # return loss
 
     @typechecked
     def generate(self, texts):
@@ -224,7 +224,8 @@ class VqGanClipGenerator(nn.Module):
         for _ in tqdm(range(self.config.max_iterations)):
             # Change text prompt
             opt.zero_grad(set_to_none=True)
-            loss = self.update_step(z, prompts)
+            batch_loss = self.update_step(z, prompts)
+            loss = batch_loss.sum()
             loss.backward()
             opt.step()
             
