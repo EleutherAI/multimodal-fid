@@ -16,9 +16,6 @@ from typeguard import typechecked
 from typing import List, Optional, Tuple
 from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
 from vqgan_clip.grad import ReplaceGrad, ClampWithGrad
-
-from ttig.models.vqgan_clip import cutout_factory, load_vqgan_model, random_gradient_image, random_noise_image
-
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
