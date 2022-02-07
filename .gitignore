@@ -9,6 +9,7 @@ __pycache__/
 .vscode
 .idea
 
+tests/data
 checkpoints/
 vqgan-clip/build
 CLIP/build

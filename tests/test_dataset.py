@@ -9,9 +9,17 @@ data_dir = join(test_dir, 'data')
 proj_dir = dirname(test_dir)
 sys.path.append(test_dir) # fucking cursed
 
-from ttig.dataset import build_webdataset
-from ttig.sentence_transformer import build_tokenizer
+from ttig.dataset import build_webdataset, CoCa3mTextDataset
+from ttig.models.sentence_transformer import build_tokenizer
 
+
+def test_coca3m_dataset():
+    data = CoCa3mTextDataset(data_dir, batch_size=32)
+    keys, captions = next(iter(data))
+    assert len(keys) == 32
+    assert len(captions) == 32
+    print(keys)
+    
 
 def test_webdataset():
     def ident(x):

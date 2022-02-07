@@ -4,7 +4,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from ttig.dataset import build_resizer, build_webdataset
+from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset
 from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
 from torchvision.transforms import ToTensor, Compose
 from typing import Optional, Tuple
@@ -70,6 +70,33 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
         batch_size=None,
         pin_memory=True
     )
+
+
+def save_images(keys, images):
+    pass
+
+
+def make_model_generator(folder_fp, model, batch_size: int, tokenizer = None, save_images: bool = False):
+    # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
+    # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
+    tokenizer = tokenizer if tokenizer is not None else build_tokenizer()
+    dataset = CoCa3mTextDataset(folder_fp, batch_size=batch_size)
+    for keys, captions in dataset:
+        prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
+        images = model.generate(prompts)
+        if save_images:
+            save_images(keys, images)
+        yield images
+
+
+
+    return DataLoader(
+        dataset,
+        batch_size=None,
+        pin_memory=True
+    )
+
+
 
 
 def load_reference_statistics(name: str) -> MmfidStats:

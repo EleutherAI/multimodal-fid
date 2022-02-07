@@ -1,6 +1,8 @@
 from cleanfid.resize import make_resizer
+from itertools import chain
 from pathlib import Path
 from PIL import Image
+import pyarrow as pa
 import pyarrow.dataset as ds
 from torch.utils.data import Dataset, IterableDataset
 from typing import Any, Callable, Tuple
@@ -25,17 +27,31 @@ def build_webdataset(data_fp: str, image_preprocess_fn: Callable, text_preproces
 
 class CoCa3mTextDataset(IterableDataset):
 
-    def __init__(self, folder_fp):
+    def __init__(self, folder_fp, batch_size=128):
         super().__init__()
-        self.data = ds.dataset(folder_fp, format='parquet')
+        path = Path(folder_fp)
+        self.dataset = ds.dataset([*path.glob('*.parquet')], format='parquet')
+        self.batch_size = batch_size
+    
+    @staticmethod
+    def records(record_batch):
+        for i in range(record_batch.num_rows):
+            record = record_batch.take(pa.array([i]))
+            yield record['key'], record['caption']
     
     def __iter__(self):
-        for batch in self.data.to_batches():
-            yield batch
-
-
-
-
+        # First read from the parquet sequentially in pyarrow recordbatches
+        data = self.dataset.to_batches(
+            columns = ['key', 'caption'],
+            filter = ds.field('status') == 'success',
+            batch_size = self.batch_size
+        )
+        # Then turn it into a single iterable that returns individual tuples of strings
+        batches = chain.from_iterable((self.records(record_batch) for record_batch in data))
+        # Then batch those at the appropriate size
+        iterator = [iter(batches)] * self.batch_size
+        for batch in zip(*iterator):
+            yield tuple(zip(*batch))
 
 
 
