@@ -36,7 +36,7 @@ class CoCa3mTextDataset(IterableDataset):
     @staticmethod
     def records(record_batch):
         for i in range(record_batch.num_rows):
-            record = record_batch.take(pa.array([i]))
+            record = record_batch.take(pa.array([i])).to_pydict()
             yield record['key'], record['caption']
     
     def __iter__(self):
