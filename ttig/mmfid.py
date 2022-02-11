@@ -1,4 +1,5 @@
-# from cleanfid.fid import frechet_distance
+from cleanfid.fid import frechet_distance
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import os
 import torch
@@ -22,6 +23,36 @@ def feats_to_stats(features):
     mu = np.mean(features, axis=0)
     sigma = np.cov(features, rowvar=False)
     return mu, sigma
+
+
+def calc_mmfid_from_model(
+    folder_fp: str,
+    gen_model,
+    stats_model,
+    reference_stats_name: str,
+    model_name: str,
+    batch_size: int,
+    image_size=(299, 299),
+    tokenizer = None,
+    num_samples: Optional[int] = 524_288, # 2 ** 19
+    save_images: bool = False
+):
+    os.makedirs(STATS_FOLDER, exist_ok=True)
+    outname = f"{model_name}.npz"
+    outf = os.path.join(STATS_FOLDER, outname)
+    ref_mu, ref_sigma = load_reference_statistics(reference_stats_name) 
+    data_gen = make_model_generator(folder_fp, gen_model, model_name, batch_size, image_size, tokenizer, num_samples, save_images)
+    features = calculate_features_from_generator(stats_model, data_gen)
+    mu, sigma = feats_to_stats(features)
+    print(f"Saving custom Multi-Modal FID (MMFID) stats to {outf}")
+    np.savez_compressed(outf, mu=mu, sigma=sigma)
+    mmfid = frechet_distance(mu, sigma, ref_mu, ref_sigma)
+    print(mmfid)
+    return mmfid
+
+
+
+    
 
 
 def calculate_features_from_generator(mumo_model, data_generator):
@@ -64,7 +95,8 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
         dataset = dataset.slice(num_samples)
     dataset = dataset.batched(batch_size).map_tuple(
         ident, 
-        lambda sents: tokenizer(sents, padding='longest', truncation=True, return_tensors='pt'))
+        lambda sents: tokenizer(sents, padding='longest', truncation=True, return_tensors='pt')
+    )
     return DataLoader(
         dataset,
         batch_size=None,
@@ -72,31 +104,39 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
     )
 
 
-def save_images(keys, images):
-    pass
+def save_images(keys, images, model_name):
+    image_dir = f'./images/{model_name}'
+    os.makedirs(image_dir, exist_ok=True)
+    for key, image in zip(keys, images):
+        image.save(f'{image_dir}/{key}.png')
 
 
-def make_model_generator(folder_fp, model, batch_size: int, tokenizer = None, save_images: bool = False):
+def make_model_generator(
+    folder_fp: str,
+    model,
+    model_name: str,
+    batch_size: int,
+    image_size=(299, 299),
+    tokenizer = None,
+    num_samples = None,
+    save_images: bool = True
+):
     # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
     # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
+    image_fn = Compose([np.asarray, build_resizer(image_size), ToTensor()])
     tokenizer = tokenizer if tokenizer is not None else build_tokenizer()
     dataset = CoCa3mTextDataset(folder_fp, batch_size=batch_size)
-    for keys, captions in dataset:
-        prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
-        images = model.generate(prompts)
-        if save_images:
-            save_images(keys, images)
-        yield images
-
-
-
-    return DataLoader(
-        dataset,
-        batch_size=None,
-        pin_memory=True
-    )
-
-
+    count = 0
+    with ThreadPoolExecutor(max_workers=32) as executor:
+        for keys, captions in dataset:
+            count += len(keys)
+            if num_samples is not None and count > num_samples:
+                break
+            prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
+            images = model.generate(prompts)
+            if save_images:
+                executor.submit(save_images, keys, images, model_name)
+            yield prompts, image_fn(images)
 
 
 def load_reference_statistics(name: str) -> MmfidStats:

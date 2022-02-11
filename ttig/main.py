@@ -3,8 +3,9 @@ import sys
 
 sys.path.append(abspath(dirname(dirname(__file__)))) # TODO: Proper packaging so this isn't necessary
 
-from ttig.mmfid import make_reference_statistics
-from ttig.model import MultiModalFeatureExtractor
+from ttig.mmfid import make_reference_statistics, calc_mmfid_from_model
+from ttig.models.model import MultiModalFeatureExtractor
+from ttig.models.vqgan_clip import VqGanClipGenerator, VQGANConfig
 import typer
 
 
@@ -12,8 +13,13 @@ app = typer.Typer()
 
 
 @app.command()
-def mmfid():
-    pass
+def mmfid(checkpoint_path: str, config_path: str, data_fp: str, num_samples: int = 524_288, batch_size: int = 128):
+    config = VQGANConfig()
+    stats_model = MultiModalFeatureExtractor()
+    stats_model.to('cuda')
+    vqgan = VqGanClipGenerator(checkpoint_path, config_path, config)
+    vqgan.to('cuda')
+    calc_mmfid_from_model(data_fp, vqgan, stats_model, '', '', batch_size, num_samples, save_images = True)
 
 
 @app.command()
