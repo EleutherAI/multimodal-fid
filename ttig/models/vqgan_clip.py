@@ -12,6 +12,7 @@ from torchvision.transforms import functional as tf
 from torchvision import transforms
 from tqdm import tqdm
 from torchtyping import TensorType, patch_typeguard
+from transformers.tokenization_utils_base import BatchEncoding
 from typeguard import typechecked
 from typing import List, Optional, Tuple, Union
 from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
@@ -191,7 +192,7 @@ class VqGanClipGenerator(nn.Module):
         return dists # return loss
 
     @typechecked
-    def generate(self, texts: Union[str, List[str]]) -> ImageTensor:
+    def generate(self, texts: BatchEncoding) -> ImageTensor:
         if isinstance(texts, str):
             texts = [texts]
         batch_size = len(texts)

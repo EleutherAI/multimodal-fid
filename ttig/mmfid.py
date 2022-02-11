@@ -5,6 +5,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from transformers.tokenization_utils_base import BatchEncoding
 from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset
 from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
 from ttig.utils import to_pil_image
