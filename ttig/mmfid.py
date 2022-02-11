@@ -35,7 +35,7 @@ def calc_mmfid_from_model(
     batch_size: int,
     tokenizer = None,
     num_samples: Optional[int] = 524_288, # 2 ** 19
-    save_images: bool = False
+    save_images: bool = True
 ):
     image_size: Tuple[int, int] = (299, 299)
     os.makedirs(STATS_FOLDER, exist_ok=True)
@@ -148,7 +148,7 @@ def make_model_generator(
             images = model.generate(prompts)
             if save_images:
                 executor.submit(write_images_to_disk, keys, images, model_name)
-            yield prompts, image_fn(images.to('cpu'))
+            yield prompts, image_fn(images.to('cpu').detach())
 
 
 def load_reference_statistics(name: str) -> MmfidStats:
