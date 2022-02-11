@@ -32,16 +32,18 @@ def calc_mmfid_from_model(
     reference_stats_name: str,
     model_name: str,
     batch_size: int,
-    image_size=(299, 299),
     tokenizer = None,
     num_samples: Optional[int] = 524_288, # 2 ** 19
     save_images: bool = False
 ):
+    image_size: Tuple[int, int] = (299, 299)
     os.makedirs(STATS_FOLDER, exist_ok=True)
     outname = f"{model_name}.npz"
     outf = os.path.join(STATS_FOLDER, outname)
     ref_mu, ref_sigma = load_reference_statistics(reference_stats_name) 
-    data_gen = make_model_generator(folder_fp, gen_model, model_name, batch_size, image_size, tokenizer, num_samples, save_images)
+    data_gen = make_model_generator(
+        folder_fp,
+        gen_model, model_name, batch_size, image_size, tokenizer, num_samples, save_images)
     features = calculate_features_from_generator(stats_model, data_gen)
     mu, sigma = feats_to_stats(features)
     print(f"Saving custom Multi-Modal FID (MMFID) stats to {outf}")
@@ -116,9 +118,9 @@ def make_model_generator(
     model,
     model_name: str,
     batch_size: int,
-    image_size=(299, 299),
+    image_size: Tuple[int, int] = (299, 299),
     tokenizer = None,
-    num_samples = None,
+    num_samples: Optional[int] = None,
     save_images: bool = True
 ):
     # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
