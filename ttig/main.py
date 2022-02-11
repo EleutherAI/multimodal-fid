@@ -30,7 +30,7 @@ def mmfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_28
         ref_stats_name,
         'vqgan_imagenet',
         batch_size,
-        num_samples,
+        num_samples = num_samples,
         save_images = True
     )
 
