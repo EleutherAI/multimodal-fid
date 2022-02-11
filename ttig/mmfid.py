@@ -5,7 +5,6 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers.tokenization_utils_base import BatchEncoding
 from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset
 from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
 from ttig.utils import to_pil_image
@@ -45,7 +44,14 @@ def calc_mmfid_from_model(
     ref_mu, ref_sigma = load_reference_statistics(reference_stats_name) 
     data_gen = make_model_generator(
         folder_fp,
-        gen_model, model_name, batch_size, image_size, tokenizer, num_samples, save_images)
+        gen_model,
+        model_name,
+        batch_size,
+        image_size,
+        tokenizer,
+        num_samples,
+        save_images
+    )
     features = calculate_features_from_generator(stats_model, data_gen)
     mu, sigma = feats_to_stats(features)
     print(f"Saving custom Multi-Modal FID (MMFID) stats to {outf}")
@@ -108,7 +114,7 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
     )
 
 
-def save_images(keys, images, model_name):
+def write_images_to_disk(keys, images, model_name):
     print('hello I am saving an image')
     image_dir = f'./images/{model_name}'
     os.makedirs(image_dir, exist_ok=True)
@@ -141,8 +147,8 @@ def make_model_generator(
             prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
             images = model.generate(prompts)
             if save_images:
-                executor.submit(save_images, keys, images, model_name)
-            yield prompts, image_fn(images)
+                executor.submit(write_images_to_disk, keys, images, model_name)
+            yield prompts, image_fn(images.to('cpu'))
 
 
 def load_reference_statistics(name: str) -> MmfidStats:
