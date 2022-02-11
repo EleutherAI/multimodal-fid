@@ -37,7 +37,7 @@ class CoCa3mTextDataset(IterableDataset):
     def records(record_batch):
         for i in range(record_batch.num_rows):
             record = record_batch.take(pa.array([i])).to_pydict()
-            yield record['key'], record['caption']
+            yield record['key'][0], record['caption'][0]
     
     def __iter__(self):
         # First read from the parquet sequentially in pyarrow recordbatches
