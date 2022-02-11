@@ -131,6 +131,7 @@ def make_model_generator(
     count = 0
     with ThreadPoolExecutor(max_workers=32) as executor:
         for keys, captions in dataset:
+            print(captions)
             count += len(keys)
             if num_samples is not None and count > num_samples:
                 break
