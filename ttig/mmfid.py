@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset
 from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
+from ttig.utils import to_pil_image
 from torchvision.transforms import ToTensor, Compose
 from typing import Optional, Tuple
 
@@ -107,10 +108,11 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
 
 
 def save_images(keys, images, model_name):
+    print('hello I am saving an image')
     image_dir = f'./images/{model_name}'
     os.makedirs(image_dir, exist_ok=True)
     for key, image in zip(keys, images):
-        image.save(f'{image_dir}/{key}.png')
+        to_pil_image(image).save(f'{image_dir}/{key}.png')
 
 
 def make_model_generator(

@@ -13,7 +13,7 @@ from torchvision import transforms
 from tqdm import tqdm
 from torchtyping import TensorType, patch_typeguard
 from typeguard import typechecked
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
 from vqgan_clip.grad import ReplaceGrad, ClampWithGrad
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -191,7 +191,7 @@ class VqGanClipGenerator(nn.Module):
         return dists # return loss
 
     @typechecked
-    def generate(self, texts):
+    def generate(self, texts: Union[str, List[str]]) -> ImageTensor:
         if isinstance(texts, str):
             texts = [texts]
         batch_size = len(texts)
