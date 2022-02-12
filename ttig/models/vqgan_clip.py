@@ -12,7 +12,6 @@ from torchvision.transforms import functional as tf
 from torchvision import transforms
 from tqdm import tqdm
 from torchtyping import TensorType, patch_typeguard
-from transformers.tokenization_utils_base import BatchEncoding
 from typeguard import typechecked
 from typing import List, Optional, Tuple, Union
 from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
@@ -74,7 +73,7 @@ class VQGANConfig:
     cut_method: str = 'latest' # other option is 'original'
     cut_pow: float = 1.0
     learning_rate: float = 0.1
-    init_noise: Optional[str] = None
+    init_noise: Optional[str] = 'pixels'
     augments: Optional[List] = None
     size: Tuple[int] = (256, 256)
     step_size: float = 0.1
@@ -104,7 +103,9 @@ def cutout_factory(cut_method: str, cut_size, num_cuts: int, cut_pow: float, aug
     if cut_method == 'original':
         return MakeCutoutsOrig(not_args, cut_size, num_cuts)
     elif cut_method == 'latest':
-        return MakeCutouts(not_args, cut_size, num_cuts)
+        cutouts = MakeCutouts(not_args, cut_size, num_cuts)
+        cutouts.noise_fac = False
+        return cutouts
     else:
         raise ValueError(f'Not recognized cutout-making type {cut_method}')
 
@@ -113,7 +114,7 @@ class VqGanClipGenerator(nn.Module):
 
     def __init__(self, checkpoint_path, model_config_path, config, clip_model_type='ViT-B/16', device='cuda'):
         super().__init__()
-        self.vqgan = load_vqgan_model(checkpoint_path, model_config_path).to(device)
+        self.vqgan = load_vqgan_model(checkpoint_path, model_config_path).eval().requires_grad_(False).to(device)
         self.clip = clip.load(clip_model_type)[0].eval().requires_grad_(False).to(device)
         self.device = device
         self.config = config
@@ -137,13 +138,18 @@ class VqGanClipGenerator(nn.Module):
     def clamp_with_grad(x, y, z):
         return ClampWithGrad.apply(x, y, z)
 
+    @property
+    def vqgan_sides(self):
+        f = 2 ** (self.vqgan.decoder.num_resolutions - 1) # TODO: What number is this usually?
+        toksX, toksY = self.config.size[0] // f, self.config.size[1] // f
+        return (toksX * f, toksY * f)
+
     @typechecked
     def random_image(
         self,
         rand_im_type: str,
         size: Tuple[int, int],
         batch: int, 
-        sides: Tuple[int]
     ) ->  VQCodeTensor:
         if rand_im_type == 'pixels':
             images = [random_noise_image(*size) for _ in range(batch)]
@@ -152,7 +158,7 @@ class VqGanClipGenerator(nn.Module):
         else:
             raise ValueError(f'Unknown random initialization strategy {rand_im_type}')
         pil_images = [
-            tf.to_tensor(im.resize(sides, Image.LANCZOS)).unsqueeze(0)
+            tf.to_tensor(im.resize(self.vqgan_sides, Image.LANCZOS)).unsqueeze(0)
             for im in images
         ]
         pil_tensor = torch.concat(pil_images).to(self.device)
@@ -192,20 +198,20 @@ class VqGanClipGenerator(nn.Module):
         return dists # return loss
 
     @typechecked
-    def generate(self, texts: BatchEncoding) -> ImageTensor:
+    def generate(self, texts: List[str]) -> ImageTensor:
         if isinstance(texts, str):
             texts = [texts]
         batch_size = len(texts)
         f = 2 ** (self.vqgan.decoder.num_resolutions - 1) # TODO: What number is this usually?
         toksX, toksY = self.config.size[0] // f, self.config.size[1] // f
-        sides = (toksX * f, toksY * f)
+        #sides = (toksX * f, toksY * f)
         # TODO: What is this?????
         e_dim = self.vqgan.quantize.e_dim
         n_toks = self.vqgan.quantize.n_e
         z_min = self.vqgan.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
         z_max = self.vqgan.quantize.embedding.weight.max(dim=0).values[None, :, None, None]   
         if self.config.init_noise in ('pixels', 'gradient'):
-            z = self.random_image(self.config.init_noise, self.config.image_size, batch_size, sides)
+            z = self.random_image(self.config.init_noise, self.config.size, batch_size)
         else:
             one_hot_embeds = one_hot(torch.randint(n_toks, [toksY * toksX], device=self.device), n_toks).float()        
             z = one_hot_embeds @ self.vqgan.quantize.embedding.weight

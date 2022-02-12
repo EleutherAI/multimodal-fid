@@ -1,14 +1,12 @@
 
 from os.path import dirname, abspath, join
 import torch
-from ttig.models.model import spherical_dist_loss, VqGanCLIPGenerator
+from ttig.models.model import spherical_dist_loss
 
 
 proj_dir = abspath(dirname(dirname(__file__)))
 model_dir = join(proj_dir, 'checkpoints', 'vqgan_clip')
 # sys.path.append(test_dir) # fucking cursed
-
-
 
 
 def test_spherical_dist_loss():

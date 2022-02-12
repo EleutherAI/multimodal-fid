@@ -4,15 +4,38 @@ import sys
 proj_dir = abspath(dirname(dirname(__file__)))
 sys.path.append(proj_dir) # TODO: Proper packaging so this isn't necessary
 
-from ttig.mmfid import make_reference_statistics, calc_mmfid_from_model
+from ttig.mmfid import make_reference_statistics, calc_mmfid_from_model, make_model_generator
 from ttig.models.model import MultiModalFeatureExtractor
 from ttig.models.vqgan_clip import VqGanClipGenerator, VQGANConfig
+from tqdm import tqdm
 import typer
 
 
 app = typer.Typer()
 
 
+@app.command()
+def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
+    model_name = 'vqgan_imagenet_f16_16384'
+    checkpoint_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.ckpt')
+    config_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.yaml')
+    config = VQGANConfig()
+    vqgan = VqGanClipGenerator(checkpoint_path, config_path, config)
+    vqgan.to('cuda')
+    data_gen = make_model_generator(
+        data_fp,
+        vqgan,
+        'vqgan_imagenet',
+        batch_size,
+        (299, 299),
+        num_samples,
+        save_images=True
+    )
+    for texts, images in tqdm(data_gen):
+        del texts
+        del images
+
+        
 @app.command()
 def mmfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_288, batch_size: int = 128):
     model_name = 'vqgan_imagenet_f16_16384'

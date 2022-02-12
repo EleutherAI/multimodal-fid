@@ -1,3 +1,4 @@
+from distutils.command.build import build
 from cleanfid.fid import frechet_distance
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
@@ -33,7 +34,6 @@ def calc_mmfid_from_model(
     reference_stats_name: str,
     model_name: str,
     batch_size: int,
-    tokenizer = None,
     num_samples: Optional[int] = 524_288, # 2 ** 19
     save_images: bool = True
 ):
@@ -48,7 +48,6 @@ def calc_mmfid_from_model(
         model_name,
         batch_size,
         image_size,
-        tokenizer,
         num_samples,
         save_images
     )
@@ -60,9 +59,6 @@ def calc_mmfid_from_model(
     print(mmfid)
     return mmfid
 
-
-
-    
 
 
 def calculate_features_from_generator(mumo_model, data_generator):
@@ -115,11 +111,10 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
 
 
 def write_images_to_disk(keys, images, model_name):
-    print('hello I am saving an image')
     image_dir = f'./images/{model_name}'
     os.makedirs(image_dir, exist_ok=True)
     for key, image in zip(keys, images):
-        to_pil_image(image).save(f'{image_dir}/{key}.png')
+        image.save(f'{image_dir}/{key}.png')
 
 
 def make_model_generator(
@@ -128,15 +123,14 @@ def make_model_generator(
     model_name: str,
     batch_size: int,
     image_size: Tuple[int, int] = (299, 299),
-    tokenizer = None,
     num_samples: Optional[int] = None,
     save_images: bool = True
 ):
     # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
     # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
     image_fn = Compose([np.asarray, build_resizer(image_size), ToTensor()])
-    tokenizer = tokenizer if tokenizer is not None else build_tokenizer()
     dataset = CoCa3mTextDataset(folder_fp, batch_size=batch_size)
+    tokenizer = build_tokenizer()
     count = 0
     with ThreadPoolExecutor(max_workers=32) as executor:
         for keys, captions in dataset:
@@ -144,11 +138,16 @@ def make_model_generator(
             count += len(keys)
             if num_samples is not None and count > num_samples:
                 break
-            prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
-            images = model.generate(prompts)
+            # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
+            image_tensors = model.generate(captions)
+            image_tensors.to('cpu').detach()
+            images = [to_pil_image(im) for im in image_tensors]
             if save_images:
                 executor.submit(write_images_to_disk, keys, images, model_name)
-            yield prompts, image_fn(images.to('cpu').detach())
+            yield (
+                torch.concat([image_fn(im).unsqueeze(0) for im in images], dim=0),
+                tokenizer(captions,  padding='longest', truncation=True, return_tensors='pt')
+            )
 
 
 def load_reference_statistics(name: str) -> MmfidStats:
