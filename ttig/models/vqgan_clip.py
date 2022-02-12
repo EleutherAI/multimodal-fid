@@ -195,6 +195,7 @@ class VqGanClipGenerator(nn.Module):
             image_encodings.view([self.config.num_cuts, out.shape[0], -1]),
             prompts[None]
         )
+        del image_encodings
         return dists # return loss
 
     @typechecked
@@ -230,13 +231,14 @@ class VqGanClipGenerator(nn.Module):
 
         for _ in tqdm(range(self.config.max_iterations)):
             # Change text prompt
-            opt.zero_grad(set_to_none=True)
-            batch_loss = self.update_step(z, prompts)
-            loss = batch_loss.sum()
-            loss.backward()
-            opt.step()
-            
-            #with torch.no_grad():
-            with torch.inference_mode():
-                z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
+            with torch.cuda.amp.autocast():
+                opt.zero_grad(set_to_none=True)
+                batch_loss = self.update_step(z, prompts)
+                loss = batch_loss.sum()
+                loss.backward()
+                opt.step()
+                
+                #with torch.no_grad():
+                with torch.inference_mode():
+                    z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
         return self.generate_image(z)

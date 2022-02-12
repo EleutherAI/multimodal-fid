@@ -4,9 +4,11 @@ import sys
 proj_dir = abspath(dirname(dirname(__file__)))
 sys.path.append(proj_dir) # TODO: Proper packaging so this isn't necessary
 
-from ttig.mmfid import make_reference_statistics, calc_mmfid_from_model, make_model_generator
+from ttig.dataset import CoCa3mTextDataset
+from ttig.mmfid import make_reference_statistics, calc_mmfid_from_model, write_images_to_disk
 from ttig.models.model import MultiModalFeatureExtractor
 from ttig.models.vqgan_clip import VqGanClipGenerator, VQGANConfig
+from ttig.utils import to_pil_image
 from tqdm import tqdm
 import typer
 
@@ -22,18 +24,21 @@ def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
     config = VQGANConfig()
     vqgan = VqGanClipGenerator(checkpoint_path, config_path, config)
     vqgan.to('cuda')
-    data_gen = make_model_generator(
-        data_fp,
-        vqgan,
-        'vqgan_imagenet',
-        batch_size,
-        (299, 299),
-        num_samples,
-        save_images=True
-    )
-    for texts, images in tqdm(data_gen):
-        del texts
-        del images
+    dataset = CoCa3mTextDataset(data_fp, batch_size=batch_size)
+    count = 0
+    for keys, captions in tqdm(dataset):
+        captions = list(captions)
+        count += len(keys)
+        if num_samples is not None and count > num_samples:
+            break
+        # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
+        image_tensors = vqgan.generate(captions)
+        image_tensors.to('cpu').detach()
+        write_images_to_disk(
+            keys,
+            [to_pil_image(im) for im in image_tensors],
+            model_name
+        )
 
         
 @app.command()
