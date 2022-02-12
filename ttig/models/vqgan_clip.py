@@ -229,8 +229,10 @@ class VqGanClipGenerator(nn.Module):
         # Set the optimiser
         opt = optim.AdamW([z], lr=self.config.step_size)
 
-        for _ in tqdm(range(self.config.max_iterations)):
+        for i in tqdm(range(self.config.max_iterations)):
             # Change text prompt
+            if i % 5 == 0:
+                print(torch.cuda.memory_summary())
             with torch.cuda.amp.autocast():
                 opt.zero_grad(set_to_none=True)
                 batch_loss = self.update_step(z, prompts)
