@@ -16,6 +16,17 @@ import typer
 app = typer.Typer()
 
 
+def generate_and_save_image(model, captions, keys, model_name):
+    image_tensors = model.generate(captions)
+    image_tensors.to('cpu').detach()
+    write_images_to_disk(
+        keys,
+        [to_pil_image(im) for im in image_tensors],
+        model_name
+    )
+
+
+
 @app.command()
 def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
     model_name = 'vqgan_imagenet_f16_16384'
@@ -32,14 +43,7 @@ def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
         if num_samples is not None and count > num_samples:
             break
         # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
-        image_tensors = vqgan.generate(captions)
-        image_tensors.to('cpu').detach()
-        write_images_to_disk(
-            keys,
-            [to_pil_image(im) for im in image_tensors],
-            model_name
-        )
-
+        generate_and_save_image(vqgan, captions, keys, 'vqgan_imagenet')
         
 @app.command()
 def mmfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_288, batch_size: int = 128):
