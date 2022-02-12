@@ -1,6 +1,5 @@
 from distutils.command.build import build
 from cleanfid.fid import frechet_distance
-from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import os
 import torch
@@ -132,22 +131,21 @@ def make_model_generator(
     dataset = CoCa3mTextDataset(folder_fp, batch_size=batch_size)
     tokenizer = build_tokenizer()
     count = 0
-    with ThreadPoolExecutor(max_workers=32) as executor:
-        for keys, captions in dataset:
-            captions = list(captions)
-            count += len(keys)
-            if num_samples is not None and count > num_samples:
-                break
-            # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
-            image_tensors = model.generate(captions)
-            image_tensors.to('cpu').detach()
-            images = [to_pil_image(im) for im in image_tensors]
-            if save_images:
-                executor.submit(write_images_to_disk, keys, images, model_name)
-            yield (
-                torch.concat([image_fn(im).unsqueeze(0) for im in images], dim=0),
-                tokenizer(captions,  padding='longest', truncation=True, return_tensors='pt')
-            )
+    for keys, captions in dataset:
+        captions = list(captions)
+        count += len(keys)
+        if num_samples is not None and count > num_samples:
+            break
+        # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
+        image_tensors = model.generate(captions)
+        image_tensors.to('cpu').detach()
+        images = [to_pil_image(im) for im in image_tensors]
+        if save_images:
+            write_images_to_disk(keys, images, model_name)
+        yield (
+            torch.concat([image_fn(im).unsqueeze(0) for im in images], dim=0),
+            tokenizer(captions,  padding='longest', truncation=True, return_tensors='pt')
+        )
 
 
 def load_reference_statistics(name: str) -> MmfidStats:

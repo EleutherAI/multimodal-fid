@@ -77,7 +77,7 @@ class VQGANConfig:
     augments: Optional[List] = None
     size: Tuple[int] = (256, 256)
     step_size: float = 0.1
-    max_iterations: int = 500
+    max_iterations: int = 100
 
     
     def __post_init__(self):
@@ -231,7 +231,7 @@ class VqGanClipGenerator(nn.Module):
 
         for i in tqdm(range(self.config.max_iterations)):
             # Change text prompt
-            if i % 5 == 0:
+            if i % 50 == 0:
                 print(torch.cuda.memory_summary())
             with torch.cuda.amp.autocast():
                 opt.zero_grad(set_to_none=True)
