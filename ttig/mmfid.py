@@ -1,12 +1,15 @@
-# from cleanfid.fid import frechet_distance
+from distutils.command.build import build
+from cleanfid.fid import frechet_distance
 import numpy as np
 import os
+from PIL import PngImagePlugin
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from ttig.dataset import build_resizer, build_webdataset
-from ttig.sentence_transformer import build_tokenizer, encoding_to_cuda
+from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset
+from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
 from torchvision.transforms import ToTensor, Compose
+import torchvision.transforms.functional as tf
 from typing import Optional, Tuple
 
 
@@ -22,6 +25,53 @@ def feats_to_stats(features):
     mu = np.mean(features, axis=0)
     sigma = np.cov(features, rowvar=False)
     return mu, sigma
+
+
+def generate_and_save_images(model, captions, keys, model_name):
+    image_tensors = model.generate(captions)
+    image_tensors.to('cpu').detach()
+    images = [tf.to_pil_image(im) for im in image_tensors]
+    write_images_to_disk(
+        keys,
+        images,
+        captions,
+        model_name
+    )
+    return captions, images
+
+
+def calc_mmfid_from_model(
+    folder_fp: str,
+    gen_model,
+    stats_model,
+    reference_stats_name: str,
+    model_name: str,
+    batch_size: int,
+    num_samples: Optional[int] = 524_288, # 2 ** 19
+    save_images: bool = True
+):
+    image_size: Tuple[int, int] = (299, 299)
+    os.makedirs(STATS_FOLDER, exist_ok=True)
+    outname = f"{model_name}.npz"
+    outf = os.path.join(STATS_FOLDER, outname)
+    ref_mu, ref_sigma = load_reference_statistics(reference_stats_name) 
+    data_gen = make_model_generator(
+        folder_fp,
+        gen_model,
+        model_name,
+        batch_size,
+        image_size,
+        num_samples,
+        save_images
+    )
+    features = calculate_features_from_generator(stats_model, data_gen)
+    mu, sigma = feats_to_stats(features)
+    print(f"Saving custom Multi-Modal FID (MMFID) stats to {outf}")
+    np.savez_compressed(outf, mu=mu, sigma=sigma)
+    mmfid = frechet_distance(mu, sigma, ref_mu, ref_sigma)
+    print(mmfid)
+    return mmfid
+
 
 
 def calculate_features_from_generator(mumo_model, data_generator):
@@ -64,12 +114,49 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
         dataset = dataset.slice(num_samples)
     dataset = dataset.batched(batch_size).map_tuple(
         ident, 
-        lambda sents: tokenizer(sents, padding='longest', truncation=True, return_tensors='pt'))
+        lambda sents: tokenizer(sents, padding='longest', truncation=True, return_tensors='pt')
+    )
     return DataLoader(
         dataset,
         batch_size=None,
         pin_memory=True
     )
+
+
+def write_images_to_disk(keys, images, captions, model_name):
+    image_dir = f'./images/{model_name}'
+    os.makedirs(image_dir, exist_ok=True)
+    for key, caption, image in zip(keys, captions, images):
+        info = PngImagePlugin.PngInfo()
+        info.add_text('caption:', f'{caption}')
+        image.save(f'{image_dir}/{key}.png', pnginfo=info)
+
+
+def make_model_generator(
+    folder_fp: str,
+    model,
+    model_name: str,
+    batch_size: int,
+    image_size: Tuple[int, int] = (299, 299),
+    num_samples: Optional[int] = None,
+    save_images: bool = True
+):
+    # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
+    # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
+    image_fn = Compose([np.asarray, build_resizer(image_size), ToTensor()])
+    dataset = CoCa3mTextDataset(folder_fp, batch_size=batch_size)
+    tokenizer = build_tokenizer()
+    count = 0
+    for keys, captions in dataset:
+        captions = list(captions)
+        count += len(keys)
+        if num_samples is not None and count > num_samples:
+            break
+        captions, images = generate_and_save_images(model, captions, keys, model_name)
+        yield (
+            torch.concat([image_fn(im).unsqueeze(0) for im in images]),
+            tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
+        )
 
 
 def load_reference_statistics(name: str) -> MmfidStats:
