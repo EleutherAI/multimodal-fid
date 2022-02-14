@@ -112,7 +112,7 @@ def cutout_factory(cut_method: str, cut_size, num_cuts: int, cut_pow: float, aug
 
 class VqGanClipGenerator(nn.Module):
 
-    def __init__(self, checkpoint_path, model_config_path, config, clip_model_type='ViT-B/16', device='cuda'):
+    def __init__(self, checkpoint_path, model_config_path, config, clip_model_type='ViT-B/16', device='cuda:0'):
         super().__init__()
         self.vqgan = load_vqgan_model(checkpoint_path, model_config_path).eval().requires_grad_(False).to(device)
         self.clip = clip.load(clip_model_type)[0].eval().requires_grad_(False).to(device)
