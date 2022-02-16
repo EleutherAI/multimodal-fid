@@ -13,7 +13,7 @@ from torchvision import transforms
 from tqdm import tqdm
 from torchtyping import TensorType, patch_typeguard
 from typeguard import typechecked
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
 from vqgan_clip.grad import ReplaceGrad, ClampWithGrad
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -73,7 +73,7 @@ class VQGANConfig:
     cut_method: str = 'latest' # other option is 'original'
     cut_pow: float = 1.0
     learning_rate: float = 0.1
-    init_noise: Optional[str] = 'pixels'
+    init_noise: Optional[str] = None
     augments: Optional[List] = None
     size: Tuple[int] = (256, 256)
     step_size: float = 0.1
@@ -215,7 +215,7 @@ class VqGanClipGenerator(nn.Module):
         if self.config.init_noise in ('pixels', 'gradient'):
             z = self.random_image(self.config.init_noise, self.config.size, batch_size)
         else:
-            one_hot_embeds = one_hot(torch.randint(n_toks, [toksY * toksX], device=self.device), n_toks).float()        
+            one_hot_embeds = one_hot(torch.randint(n_toks, [batch_size, toksY * toksX], device=self.device), n_toks).float()
             z = one_hot_embeds @ self.vqgan.quantize.embedding.weight
             z = z.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2) 
         z.requires_grad_(True)    
