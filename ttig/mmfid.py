@@ -2,13 +2,14 @@ from distutils.command.build import build
 from cleanfid.fid import frechet_distance
 import numpy as np
 import os
+from PIL import PngImagePlugin
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset
 from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
-from ttig.utils import to_pil_image
 from torchvision.transforms import ToTensor, Compose
+import torchvision.transforms.functional as tf
 from typing import Optional, Tuple
 
 
@@ -24,6 +25,19 @@ def feats_to_stats(features):
     mu = np.mean(features, axis=0)
     sigma = np.cov(features, rowvar=False)
     return mu, sigma
+
+
+def generate_and_save_images(model, captions, keys, model_name):
+    image_tensors = model.generate(captions)
+    image_tensors.to('cpu').detach()
+    images = [tf.to_pil_image(im) for im in image_tensors]
+    write_images_to_disk(
+        keys,
+        images,
+        captions,
+        model_name
+    )
+    return captions, images
 
 
 def calc_mmfid_from_model(
@@ -109,11 +123,13 @@ def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = No
     )
 
 
-def write_images_to_disk(keys, images, model_name):
+def write_images_to_disk(keys, images, captions, model_name):
     image_dir = f'./images/{model_name}'
     os.makedirs(image_dir, exist_ok=True)
-    for key, image in zip(keys, images):
-        image.save(f'{image_dir}/{key}.png')
+    for key, caption, image in zip(keys, captions, images):
+        info = PngImagePlugin.PngInfo()
+        info.add_text('caption:', f'{caption}')
+        image.save(f'{image_dir}/{key}.png', pnginfo=info)
 
 
 def make_model_generator(
@@ -136,15 +152,10 @@ def make_model_generator(
         count += len(keys)
         if num_samples is not None and count > num_samples:
             break
-        # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
-        image_tensors = model.generate(captions)
-        image_tensors.to('cpu').detach()
-        images = [to_pil_image(im) for im in image_tensors]
-        if save_images:
-            write_images_to_disk(keys, images, model_name)
+        captions, images = generate_and_save_images(model, captions, keys, model_name)
         yield (
-            torch.concat([image_fn(im).unsqueeze(0) for im in images], dim=0),
-            tokenizer(captions,  padding='longest', truncation=True, return_tensors='pt')
+            torch.concat([image_fn(im).unsqueeze(0) for im in images]),
+            tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
         )
 
 

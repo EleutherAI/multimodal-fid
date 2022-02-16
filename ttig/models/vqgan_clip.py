@@ -77,7 +77,7 @@ class VQGANConfig:
     augments: Optional[List] = None
     size: Tuple[int] = (256, 256)
     step_size: float = 0.1
-    max_iterations: int = 100
+    max_iterations: int = 500
 
     
     def __post_init__(self):
@@ -188,6 +188,7 @@ class VqGanClipGenerator(nn.Module):
     @typechecked
     def update_step(self, z: VQCodeTensor, prompts: EmbedTensor) -> TensorType[-1]:
         out = self.generate_image(z)
+        # print(torch.cuda.memory_summary())
         image_encodings: EmbedTensor = self.clip.encode_image(
             self.normalize(self.make_cutouts(out))
         ).float()
@@ -229,18 +230,17 @@ class VqGanClipGenerator(nn.Module):
         # Set the optimiser
         opt = optim.AdamW([z], lr=self.config.step_size)
 
-        for i in tqdm(range(self.config.max_iterations)):
+        for _ in tqdm(range(self.config.max_iterations)):
             # Change text prompt
-            if i % 50 == 0:
-                print(torch.cuda.memory_summary())
-            with torch.cuda.amp.autocast():
-                opt.zero_grad(set_to_none=True)
-                batch_loss = self.update_step(z, prompts)
-                loss = batch_loss.sum()
-                loss.backward()
-                opt.step()
-                
-                #with torch.no_grad():
-                with torch.inference_mode():
-                    z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
+            # if i % 50 == 0:
+            #     print(torch.cuda.memory_summary())
+            opt.zero_grad(set_to_none=True)
+            batch_loss = self.update_step(z, prompts)
+            loss = batch_loss.sum()
+            loss.backward()
+            opt.step()
+            
+            #with torch.no_grad():
+            with torch.inference_mode():
+                z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
         return self.generate_image(z)
