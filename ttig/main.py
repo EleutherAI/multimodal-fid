@@ -36,24 +36,6 @@ def generate_and_save_image(model, captions, model_name):
 
 
 @app.command()
-def benchmark(file: str = 'benchmarks.txt', batch_size: int = 4, seed: int = 2):
-    torch.manual_seed(seed)
-    model_name = 'vqgan_imagenet_f16_16384'
-    checkpoint_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.ckpt')
-    config_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.yaml')
-    config = VQGANConfig()
-    vqgan = VqGanClipGenerator(checkpoint_path, config_path, config)
-    vqgan.to('cuda:0')
-    with open(file, mode='r') as txtfile:
-        dataset = txtfile.readlines()
-    data_gen = DataLoader(dataset, batch_size=batch_size)
-    for captions in tqdm(data_gen):
-        # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
-        generate_and_save_image(vqgan, captions, 'vqgan_imagenet')
-
-
-
-@app.command()
 def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
     model_name = 'vqgan_imagenet_f16_16384'
     checkpoint_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.ckpt')
@@ -70,6 +52,7 @@ def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
             break
         # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
         generate_and_save_image(vqgan, captions, keys, 'vqgan_imagenet')
+        
         
 @app.command()
 def mmfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_288, batch_size: int = 128):
