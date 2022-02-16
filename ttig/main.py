@@ -26,7 +26,6 @@ def generate_and_save_image(model, captions, keys, model_name):
     )
 
 
-
 @app.command()
 def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
     model_name = 'vqgan_imagenet_f16_16384'
@@ -44,6 +43,7 @@ def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
             break
         # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
         generate_and_save_image(vqgan, captions, keys, 'vqgan_imagenet')
+        
         
 @app.command()
 def mmfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_288, batch_size: int = 128):
