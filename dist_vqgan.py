@@ -1,5 +1,6 @@
 import argparse
 import math
+import os
 from pathlib import Path
 import sys
 
@@ -9,6 +10,7 @@ from omegaconf import OmegaConf
 from PIL import Image, ImageDraw
 from taming.models import cond_transformer, vqgan
 import torch
+from torch.distributed import Backend, init_process_group
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import transforms
@@ -18,6 +20,13 @@ from tqdm import tqdm
 from CLIP import clip
 
 import kornia.augmentation as K
+
+
+def setup(rank, world_size):    
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    init_process_group("nccl", rank=rank, world_size=world_size)
+
 
 
 def noise_gen(shape):
@@ -137,6 +146,7 @@ def one_sided_clip_loss(input, target, labels=None, logit_scale=100):
     if labels is None:
         labels = torch.arange(len(input), device=logits.device)
     return F.cross_entropy(logits, labels)
+
 
 class MakeCutouts(nn.Module):
     def __init__(self, cut_size, cutn, cut_pow=1.):
@@ -302,7 +312,7 @@ args = argparse.Namespace(
     noise_fac= 0.1,
     ema_val = 0.99,
 
-    record_generation=True,
+    record_generation=False,
 
     # noise and other constraints
     use_noise = None,
@@ -370,8 +380,7 @@ def checkin(i, losses):
     # display.display(display.Image('progress_2s.png')) 
 
 
-def ascend_txt(i, model, perceptor, prompts, z):
-    global mse_weight
+def ascend_txt(i, model, perceptor, prompts, z, z_mask, args):
     cut_size = perceptor.visual.input_resolution
     make_cutouts = MakeCutouts(cut_size, args.cutn, cut_pow=args.cut_pow)
     out = synth(z.tensor)
@@ -424,9 +433,10 @@ def ascend_txt(i, model, perceptor, prompts, z):
     return result
 
 vid_index = 0
-def train(i, model, prompt, args):
+
+def train(i, model, perceptor, prompt, args):
     
-    if args.constraint_regions and args.init_image:
+    """ if args.constraint_regions and args.init_image:
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         toksX, toksY = args.size[0] // 16, args.size[1] // 16
 
@@ -463,37 +473,33 @@ def train(i, model, prompt, args):
 
         z_mask = torch.zeros([1, 256, int(height/16), int(width/16)]).to(device)
         z_mask[:, :, c_h[0]:c_h[1], c_w[0]:c_w[1]] = 1
+     """
 
+    #  device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    # print('Using device:', device)
+    # print('using prompts: ', args.prompts)
+
+    # tv_loss = TVLoss() 
+
+    # model = load_vqgan_model(args.vqgan_config, args.vqgan_checkpoint).to(device)
     
-
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-    print('Using device:', device)
-    print('using prompts: ', args.prompts)
-
-    tv_loss = TVLoss() 
-
-    model = load_vqgan_model(args.vqgan_config, args.vqgan_checkpoint).to(device)
-    perceptor = clip.load(args.clip_model, jit=False)[0].eval().requires_grad_(False).to(device)
-    mse_weight = args.init_weight
+    # mse_weight = args.init_weight
 
 
     
     # e_dim = model.quantize.e_dim
 
-    if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
+    """ if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
         e_dim = 256
         n_toks = model.quantize.n_embed
         z_min = model.quantize.embed.weight.min(dim=0).values[None, :, None, None]
         z_max = model.quantize.embed.weight.max(dim=0).values[None, :, None, None]
-    else:
-        e_dim = model.quantize.e_dim
-        n_toks = model.quantize.n_e
-        z_min = model.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
-        z_max = model.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
-
-
-    
+    else: """
+    e_dim = model.quantize.e_dim
+    n_toks = model.quantize.n_e
+    # z_min = model.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
+    # z_max = model.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
 
     f = 2**(model.decoder.num_resolutions - 1)
     toksX, toksY = args.size[0] // f, args.size[1] // f
@@ -575,10 +581,42 @@ def do_train():
 
 def main():
     global args
-    args.prompts= sys.argv[1:]
+    # prompts= sys.argv[1:]
 
     
     do_train()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--local_rank", type=int)
+    parser.add_argument("--data-dir", type=str)
+    parser.add_argument("--batch-size", type=int, default=2)
+    args, _ = parser.parse_known_args()
+
+    
+    data_fp = '/home/mchorse/cc3m'
+    ref_stats_name='coco3m_total'
+    model_name = 'vqgan_imagenet_f16_16384'
+
+    rank = args.local_rank
+    world_size = torch.cuda.device_count()
+
+    setup(rank, world_size)
+
+    torch.cuda.set_device(rank)
+    device = torch.device(rank)
+    torch.distributed.init_process_group(
+        backend=Backend.NCCL,
+        init_method='env://'
+    )
+
+    model = load_vqgan_model(args.config_path, args.checkpoint_path)
+    perceptor = clip.load(args.clip_model, jit=False)[0].eval().requires_grad_(False)
+
+    data_loader = make_dataloader(rank, world_size, args.data_dir, args.batch_size)
+    model = main(
+        rank=rank,
+                 model=create_model(),
+                 train_loader=train_loader,
+                 test_loader=test_loader)
     main()
