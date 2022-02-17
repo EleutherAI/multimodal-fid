@@ -11,6 +11,8 @@ from PIL import Image, ImageDraw
 from taming.models import cond_transformer, vqgan
 import torch
 from torch.distributed import Backend, init_process_group
+from torch.nn.parallel.distributed import DistributedDataParallel
+from torch.utils.data import DataLoader, DistributedSampler
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import transforms
@@ -288,7 +290,7 @@ normalize = transforms.Normalize(
     std=[0.26862954, 0.26130258, 0.27577711]
 )
 
-args = argparse.Namespace(
+config = argparse.Namespace(
     
     # prompts=sys.argv[1:],
     size=[640, 512],
@@ -297,8 +299,8 @@ args = argparse.Namespace(
 
     # clip model settings
     clip_model='ViT-B/32',
-    vqgan_config='vqgan_imagenet_f16_16384.yaml',         
-    vqgan_checkpoint='vqgan_imagenet_f16_16384.ckpt',
+    vqgan_config='checkpoints/vqgan/vqgan_imagenet_f16_16384.yaml',         
+    vqgan_checkpoint='checkpoints/vqgan/vqgan_imagenet_f16_16384.ckpt',
     step_size=0.95,
     
     # cutouts / crops
@@ -334,12 +336,12 @@ args = argparse.Namespace(
 )
 
 mse_decay = 0
-if args.init_weight:
-  mse_decay = args.init_weight / args.mse_epoches
+if config.init_weight:
+    mse_decay = config.init_weight / config.mse_epoches
 
 # some hyper parameter probably doesnt have that much of an effect
 # get_mse_weight = lambda i: max(mse_weight - (mse_decay* (i/args.mse_decay_rate)),0.00)
-get_mse_weight = lambda i: max(1-(mse_decay* int((i-(args.mse_epoches))/args.mse_decay_rate)) / 2,0)
+get_mse_weight = lambda i: max(1-(mse_decay* int((i-(config.mse_epoches))/config.mse_decay_rate)) / 2,0)
 
 # <AUGMENTATIONS>
 augs = nn.Sequential(
@@ -351,14 +353,14 @@ augs = nn.Sequential(
 
 )
 
-noise = noise_gen([1, 3, args.size[0], args.size[1]])
+noise = noise_gen([1, 3, config.size[0], config.size[1]])
 image = TF.to_pil_image(noise.div(5).add(0.5).clamp(0, 1)[0])
 image.save('init3.png')
 
 
-def synth(z, z_mask, model,  quantize=True):
-    if args.constraint_regions:
-      z = replace_grad(z, z * z_mask)
+def synth(z, model,  quantize=True):
+    # if args.constraint_regions:
+    #  z = replace_grad(z, z * z_mask)
 
     if quantize:
         if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
@@ -371,7 +373,7 @@ def synth(z, z_mask, model,  quantize=True):
 
 
 @torch.no_grad()
-def checkin(i, losses):
+def checkin(i, z, losses):
     losses_str = ', '.join(f'{loss.item():g}' for loss in losses)
     tqdm.write(f'i: {i}, loss: {sum(losses).item():g}, losses: {losses_str}')
     out = synth(z.average, True)
@@ -380,15 +382,15 @@ def checkin(i, losses):
     # display.display(display.Image('progress_2s.png')) 
 
 
-def ascend_txt(i, model, perceptor, prompts, z, z_mask, args):
+def ascend_txt(i, model, perceptor, prompts, z, args):
     cut_size = perceptor.visual.input_resolution
     make_cutouts = MakeCutouts(cut_size, args.cutn, cut_pow=args.cut_pow)
-    out = synth(z.tensor)
+    out = synth(z.tensor, model)
 
     if args.record_generation:
         with torch.no_grad():
             global vid_index
-            out_a = synth(z.average, z_mask, model, True)
+            out_a = synth(z.average, model, True)
             TF.to_pil_image(out_a[0].cpu()).save(f'/content/vids/{vid_index}.png')
             vid_index += 1
 
@@ -404,12 +406,8 @@ def ascend_txt(i, model, perceptor, prompts, z, z_mask, args):
     iii = perceptor.encode_image(normalize(cutouts)).float()
 
     result = []
-
     if args.init_weight:
-        
-        global z_orig
-        
-        result.append(F.mse_loss(z.tensor, z_orig) * get_mse_weight(i) / 2)
+        result.append(torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * get_mse_weight(i) / 2)
         # result.append(F.mse_loss(z, z_orig) * ((1/torch.tensor((i)*2 + 1))*mse_weight) / 2)
 
         # with torch.no_grad():
@@ -439,68 +437,48 @@ def train(i, model, perceptor, prompt, args):
     """ if args.constraint_regions and args.init_image:
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         toksX, toksY = args.size[0] // 16, args.size[1] // 16
-
         pil_image = Image.open(args.init_image).convert('RGB')
         pil_image = pil_image.resize((toksX * 16, toksY * 16), Image.LANCZOS)
-
         width, height = pil_image.size
-
         d = ImageDraw.Draw(pil_image)
         for i in range(0,width,16):
             d.text((i+4,0), f"{int(i/16)}", fill=(50,200,100))
         for i in range(0,height,16):
             d.text((4,i), f"{int(i/16)}", fill=(50,200,100))
-
         pil_image = TF.to_tensor(pil_image)
-
         print(pil_image.shape)
         for i in range(pil_image.shape[1]):
             for j in range(pil_image.shape[2]):
                 if i % 16 == 0 or j % 16 ==0:
                     pil_image[:,i,j] = 0
-
         # select region
         c_h = [16,32]
         c_w = [0,40]
-
         c_hf = [i*16 for i in c_h]
         c_wf = [i*16 for i in c_w]
-
         pil_image[0,c_hf[0]:c_hf[1],c_wf[0]:c_wf[1]] = 0
-
         TF.to_pil_image(pil_image.cpu()).save('progress_script.png')
         # display.display(display.Image('progress_script.png'))
-
         z_mask = torch.zeros([1, 256, int(height/16), int(width/16)]).to(device)
         z_mask[:, :, c_h[0]:c_h[1], c_w[0]:c_w[1]] = 1
-     """
-
     #  device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
     # print('Using device:', device)
     # print('using prompts: ', args.prompts)
-
     # tv_loss = TVLoss() 
-
     # model = load_vqgan_model(args.vqgan_config, args.vqgan_checkpoint).to(device)
-    
     # mse_weight = args.init_weight
-
-
-    
     # e_dim = model.quantize.e_dim
-
-    """ if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
+     if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
         e_dim = 256
         n_toks = model.quantize.n_embed
         z_min = model.quantize.embed.weight.min(dim=0).values[None, :, None, None]
         z_max = model.quantize.embed.weight.max(dim=0).values[None, :, None, None]
-    else: """
-    e_dim = model.quantize.e_dim
-    n_toks = model.quantize.n_e
+    else: 
     # z_min = model.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
     # z_max = model.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
-
+    """
+    e_dim = model.quantize.e_dim
+    n_toks = model.quantize.n_e
     f = 2**(model.decoder.num_resolutions - 1)
     toksX, toksY = args.size[0] // f, args.size[1] // f
 
@@ -521,70 +499,68 @@ def train(i, model, perceptor, prompt, args):
         # else:
         z = one_hot @ model.quantize.embedding.weight
         z = z.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2)
-
-
     z = EMATensor(z, args.ema_val)
-
     # if args.mse_withzeros and not args.init_image:
-    z_orig = torch.zeros_like(z.tensor)
+    # z_orig = torch.zeros_like(z.tensor)
     # else:
     #   z_orig = z.tensor.clone()
     opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
-
     pMs = []
-
     if args.noise_prompt_weights and args.noise_prompt_seeds:
         for seed, weight in zip(args.noise_prompt_seeds, args.noise_prompt_weights):
             gen = torch.Generator().manual_seed(seed)
             embed = torch.empty([1, perceptor.visual.output_dim]).normal_(generator=gen)
             pMs.append(Prompt(embed, weight).to(device))
-
     for prompt in args.prompts:
         txt, weight, stop = parse_prompt(prompt)
         embed = perceptor.encode_text(clip.tokenize(txt).to(device)).float()
         pMs.append(Prompt(embed, weight, stop).to(device))
         # pMs[0].embed = pMs[0].embed + Prompt(embed, weight, stop).embed.to(device)
-
-    
     opt.zero_grad()
-    lossAll = ascend_txt(i)
-
+    lossAll = ascend_txt(i, model, perceptor, pMs, z, args)
     #if i % args.display_freq == 0:
-    #    checkin(i, lossAll)
-    
+    #    checkin(i, z, lossAll)
     loss = sum(lossAll)
-
     loss.backward()
     opt.step()
     z.update()
 
 
-def do_train():
-    i = 0
-    try:
-        with tqdm() as pbar:
-            while True and i != args.max_itter:
-
-                train(i)
-
-                # if i > 0 and i%args.mse_decay_rate==0 and i <= args.mse_decay_rate * args.mse_epoches:
-                #   z = EMATensor(z.average, args.ema_val)
-                #   opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
-
-                i += 1
-                # print(i)
-                pbar.update()
-    except KeyboardInterrupt:
-        pass
+def do_train(model, perceptor, prompt):
+    for i in tqdm(range(args.max_iter)):
+        train(i, model, perceptor, prompt)
+        # if i > 0 and i%args.mse_decay_rate==0 and i <= args.mse_decay_rate * args.mse_epoches:
+        #   z = EMATensor(z.average, args.ema_val)
+        #   opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
 
 
+def main(rank, model, perceptor, data_loader, args):
+    device = torch.device(f'cuda:{rank}')
+    model.to(device)
+    perceptor.to(device)
+    for prompt in data_loader:
+        do_train(model, perceptor, prompt, args)
 
-def main():
-    global args
-    # prompts= sys.argv[1:]
 
-    
-    do_train()
+def make_dataloader(rank, world_size, data_dir, batch_size):
+    with open(os.path.join(data_dir, 'benchmarks.txt')) as txtfile:
+        dataset = txtfile.readlines()
+    sampler = DistributedSampler(
+        dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=True
+    )
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        sampler=sampler,
+        pin_memory=True
+    )
+    return loader
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -594,7 +570,7 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
 
     
-    data_fp = '/home/mchorse/cc3m'
+    data_fp = '/home/mchorse/vqgan'
     ref_stats_name='coco3m_total'
     model_name = 'vqgan_imagenet_f16_16384'
 
@@ -609,14 +585,8 @@ if __name__ == "__main__":
         backend=Backend.NCCL,
         init_method='env://'
     )
-
     model = load_vqgan_model(args.config_path, args.checkpoint_path)
     perceptor = clip.load(args.clip_model, jit=False)[0].eval().requires_grad_(False)
 
-    data_loader = make_dataloader(rank, world_size, args.data_dir, args.batch_size)
-    model = main(
-        rank=rank,
-                 model=create_model(),
-                 train_loader=train_loader,
-                 test_loader=test_loader)
-    main()
+    data_loader = make_dataloader(rank, world_size, data_fp, args.batch_size)
+    main(rank, model, perceptor, data_loader, config)

@@ -10,7 +10,6 @@ import torch
 from torch.distributed import Backend, init_process_group
 from torch.nn.parallel.distributed import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
-from torch.utils.data import DistributedSampler
 from ttig.dataset import CoCa3mTextDataset
 from ttig.mmfid import calc_mmfid_from_model, write_images_to_disk
 from ttig.models.model import MultiModalFeatureExtractor
