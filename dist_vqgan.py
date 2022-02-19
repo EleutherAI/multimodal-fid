@@ -443,12 +443,12 @@ def do_train(model, perceptor, prompt, args):
             pil_image = pil_image + args.use_noise * torch.randn_like(pil_image) 
         z, *_ = model.module.encode(pil_image.to(device).unsqueeze(0) * 2 - 1)
     else:
-        one_hot = F.one_hot(torch.randint(n_toks, [toksY * toksX], device=device), n_toks).float()
+        one_hot = F.one_hot(torch.randint(n_toks, [arg.batch_size, toksY * toksX], device=device), n_toks).float()
         # if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
         #    z = one_hot @ model.quantize.embed.weight
         # else:
         z = one_hot @ model.module.quantize.embedding.weight
-        z = z.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2)
+        z = z.view([args.batch_size, toksY, toksX, e_dim]).permute(0, 3, 1, 2)
     z = EMATensor(z, args.ema_val)
     # if args.mse_withzeros and not args.init_image:
     # z_orig = torch.zeros_like(z.tensor)
