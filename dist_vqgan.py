@@ -275,7 +275,6 @@ class EMATensor(nn.Module):
     def update(self):
         if not self.training:
             raise RuntimeError('update() should only be called during training')
-
         self.accum *= self.decay
         self.biased.mul_(self.decay)
         self.biased.add_((1 - self.decay) * self.tensor)

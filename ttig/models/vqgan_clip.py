@@ -74,9 +74,14 @@ class VQGANConfig:
     cut_pow: float = 1.0
     learning_rate: float = 0.1
     init_noise: Optional[str] = None
+    init_weight: int =  2.0
     augments: Optional[List] = None
     size: Tuple[int] = (256, 256)
     step_size: float = 0.1
+    mse_withzeros: bool = True
+    mse_decay_rate: int = 50
+    mse_epoches: int = 7
+    mse_quantize: bool = True
     max_iterations: int = 500
 
     
@@ -184,9 +189,19 @@ class VqGanClipGenerator(nn.Module):
     def generate_image(self, z: VQCodeTensor) -> ImageTensor:
         z_q = self.vector_quantize(z.movedim(1, 3)).movedim(3, 1)
         return self.clamp_with_grad(self.vqgan.decode(z_q).add(1).div(2), 0, 1)
+    
+    def get_mse_weight(self, i):
+        weight = (
+            self.config.mse_decay * 
+            int((i - (self.config.mse_epoches)) / self.config.mse_decay_rate)
+        )
+        return max(1 - weight / 2, 0)
+
+    def l2_norm(self, z: VQCodeTensor, i: int):
+        torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * self.get_mse_weight(i) / 2
 
     @typechecked
-    def update_step(self, z: VQCodeTensor, prompts: EmbedTensor) -> TensorType[-1]:
+    def update_step(self, z: VQCodeTensor, prompts: EmbedTensor, i: int) -> TensorType[-1]:
         out = self.generate_image(z)
         # print(torch.cuda.memory_summary())
         image_encodings: EmbedTensor = self.clip.encode_image(
@@ -196,6 +211,9 @@ class VqGanClipGenerator(nn.Module):
             image_encodings.view([self.config.num_cuts, out.shape[0], -1]),
             prompts[None]
         )
+        if self.config.init_weight:
+            mse = self.l2_norm(z, i)
+            dists += mse
         del image_encodings
         return dists # return loss
 
@@ -226,20 +244,17 @@ class VqGanClipGenerator(nn.Module):
         
         prompts: EmbedTensor = self.clip.encode_text(clip.tokenize(texts).to(self.device)).float()
         #prompts.append(Prompt(embed).to(self.device))
-
         # Set the optimiser
         opt = optim.AdamW([z], lr=self.config.step_size)
-
-        for _ in tqdm(range(self.config.max_iterations)):
+        for i in tqdm(range(self.config.max_iterations)):
             # Change text prompt
             # if i % 50 == 0:
             #     print(torch.cuda.memory_summary())
             opt.zero_grad(set_to_none=True)
-            batch_loss = self.update_step(z, prompts)
+            batch_loss = self.update_step(z, prompts, i)
             loss = batch_loss.sum()
             loss.backward()
             opt.step()
-            
             #with torch.no_grad():
             with torch.inference_mode():
                 z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
