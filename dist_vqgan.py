@@ -306,7 +306,7 @@ config = argparse.Namespace(
     outdir = 'images/vqgan_imagenet_f16_16384',
     step_size=0.95,
     # cutouts / crops
-    cutn=64,
+    cutn=32,
     cut_pow=1.0,
     # display
     display_freq=25,
@@ -328,7 +328,7 @@ config = argparse.Namespace(
     mse_quantize = True,
 
     # end itteration
-    max_itter = 500,
+    max_iter = 500,
 )
 
 mse_decay = 0
@@ -337,7 +337,7 @@ if config.init_weight:
 
 # some hyper parameter probably doesnt have that much of an effect
 # get_mse_weight = lambda i: max(mse_weight - (mse_decay* (i/args.mse_decay_rate)),0.00)
-get_mse_weight = lambda i: max(1-(mse_decay* int((i-(config.mse_epoches))/args.mse_decay_rate)) / 2,0)
+get_mse_weight = lambda i: max(1-(mse_decay* int((i-(config.mse_epoches))/config.mse_decay_rate)) / 2,0)
 
 # <AUGMENTATIONS>
 augs = nn.Sequential(
@@ -361,13 +361,13 @@ def clean_text(text):
     return text
 
 
-def synth(z, model,  quantize=True):
+def synth(z, model,  args, quantize=True):
     # if args.constraint_regions:
     #  z = replace_grad(z, z * z_mask)
 
     if quantize:
         if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
-            z_q = vector_quantize(z.movedim(1, 3), model.module.quantize.embed.weight).movedim(3, 1)
+            z_q = vector_quantize(z.movedim(1, 3), model.quantize.embed.weight).movedim(3, 1)
         else:
             z_q = vector_quantize(z.movedim(1, 3), model.module.quantize.embedding.weight).movedim(3, 1)
     else:
@@ -387,7 +387,7 @@ def checkin(i, z, losses):
 def ascend_txt(i, model, perceptor, prompts, z, args):
     cut_size = perceptor.module.visual.input_resolution
     make_cutouts = MakeCutouts(cut_size, args.cutn, cut_pow=args.cut_pow)
-    out = synth(z.tensor, model)
+    out = synth(z.tensor, model, args)
     """
     if args.record_generation:
         with torch.no_grad():
@@ -402,7 +402,8 @@ def ascend_txt(i, model, perceptor, prompts, z, args):
     if args.noise_fac:
         facs = cutouts.new_empty([args.cutn, 1, 1, 1]).uniform_(0, args.noise_fac)
         cutouts = cutouts + facs * torch.randn_like(cutouts)
-    iii = perceptor.module.encode_image(normalize(cutouts)).float()
+    with torch.cuda.amp.autocast():
+        iii = perceptor.module.encode_image(normalize(cutouts)).float()
     result = []
     if args.init_weight:
         result.append(torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * get_mse_weight(i) / 2)
@@ -425,6 +426,7 @@ def ascend_txt(i, model, perceptor, prompts, z, args):
 
 
 def do_train(model, perceptor, prompt, args):
+    print(prompt)
     e_dim = model.module.quantize.e_dim
     n_toks = model.module.quantize.n_e
     f = 2**(model.module.decoder.num_resolutions - 1)
@@ -459,8 +461,8 @@ def do_train(model, perceptor, prompt, args):
             gen = torch.Generator().manual_seed(seed)
             embed = torch.empty([1, perceptor.module.visual.output_dim]).normal_(generator=gen)
             pMs.append(Prompt(embed, weight).to(device))
-    for prompt in args.prompts:
-        txt, weight, stop = parse_prompt(prompt)
+    for p in prompt:
+        txt, weight, stop = parse_prompt(p)
         embed = perceptor.module.encode_text(clip.tokenize(txt).to(device)).float()
         pMs.append(Prompt(embed, weight, stop).to(device))
         # pMs[0].embed = pMs[0].embed + Prompt(embed, weight, stop).embed.to(device)
@@ -476,36 +478,38 @@ def do_train(model, perceptor, prompt, args):
         # if i > 0 and i%args.mse_decay_rate==0 and i <= args.mse_decay_rate * args.mse_epoches:
         #   z = EMATensor(z.average, args.ema_val)
         #   opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
-    output = synth(z, model)
-    out_path = os.path.join(config.outdir, f'{clean_text(prompt)}.png')
-    TF.to_pil_image(output[0], out_path)
+    output = synth(z.tensor, model, args)
+    print(f'Output shape: {output.shape}')
+    out_paths = [os.path.join(config.outdir, f'{clean_text(p)}.png') for p in prompt]
+    for i, out_path in enumerate(out_paths):
+        TF.to_pil_image(output[i], out_path)
 
 
 def main(rank, model, perceptor, data_loader, args):
     device = torch.device(f'cuda:{rank}')
     model.to(device)
     perceptor.to(device)
-    model = DistributedDataParallel(model, device_ids=[rank], output_device=rank)
-    perceptor = DistributedDataParallel(perceptor, device_ids=[rank], output_device=rank)
+    model = nn.DataParallel(model)
+    perceptor = nn.DataParallel(perceptor)
     for prompt in data_loader:
         do_train(model, perceptor, prompt, args)
 
 
-def make_dataloader(rank, world_size, data_dir, batch_size):
+def make_dataloader(rank, data_dir, batch_size):
     with open(os.path.join(data_dir, 'benchmarks.txt')) as txtfile:
         dataset = txtfile.readlines()
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=True
-    )
+    #sampler = DistributedSampler(
+    #    dataset,
+    #    num_replicas=world_size,
+    #    rank=rank,
+    #    shuffle=True
+    #)
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=4,
-        sampler=sampler,
+        # sampler=sampler,
         pin_memory=True
     )
     return loader
@@ -513,7 +517,7 @@ def make_dataloader(rank, world_size, data_dir, batch_size):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--local_rank", type=int)
+   #parser.add_argument("--local_rank", type=int)
     parser.add_argument("--batch-size", type=int, default=2)
     args, _ = parser.parse_known_args()
 
@@ -522,20 +526,18 @@ if __name__ == "__main__":
     #ref_stats_name='coco3m_total'
     model_name = 'vqgan_imagenet_f16_16384'
 
-    rank = args.local_rank
-    world_size = torch.cuda.device_count()
-    print(f'Setting up backend for device {rank}')
-    setup(rank, world_size)
-
+    rank = 0 # args.local_rank
+    # world_size = torch.cuda.device_count()
+    # print(f'Setting up backend for device {rank}')
+    # setup(rank, world_size)
     torch.cuda.set_device(rank)
     device = torch.device(rank)
    # torch.distributed.init_process_group(
    #     backend=Backend.NCCL,
    #     init_method='env://'
    # )
-    model = load_vqgan_model(args.config_path, args.checkpoint_path)
-    perceptor = clip.load(args.clip_model, jit=False)[0].eval().requires_grad_(False)
-
-    data_loader = make_dataloader(rank, world_size, data_fp, args.batch_size)
+    model = load_vqgan_model(config.vqgan_config, config.vqgan_checkpoint)
+    perceptor = clip.load(config.clip_model, jit=False)[0].eval().requires_grad_(False)
+    data_loader = make_dataloader(rank, data_fp, args.batch_size)
     print(f'Rank {rank}: loaded models and beginning generation')
     main(rank, model, perceptor, data_loader, config)
