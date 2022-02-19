@@ -4,6 +4,7 @@ import sys
 
 proj_dir = abspath(dirname(dirname(__file__)))
 sys.path.append(proj_dir) # TODO: Proper packaging so this isn't necessary
+import re
 import torch
 from torch.utils.data import DataLoader
 from torchvision.transforms.functional import to_pil_image
@@ -18,11 +19,19 @@ import typer
 app = typer.Typer()
 
 
+def clean_text(text):
+    text = text.strip()
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r' ', '_', text)
+    return text
+
+
 def write_images_to_disk(captions, images, model_name):
-    image_dir = f'./images/{model_name}'
+    image_dir = f'{proj_dir}/images/{model_name}'
     os.makedirs(image_dir, exist_ok=True)
     for caption, image in zip(captions, images):
-        image.save(f"{image_dir}/{caption.replace(' ', '_')}.png")
+        caption = clean_text(caption)
+        image.save(f"{image_dir}/{caption}.png")
 
 
 def generate_and_save_image(model, captions, model_name):
@@ -33,6 +42,23 @@ def generate_and_save_image(model, captions, model_name):
         [to_pil_image(im) for im in image_tensors],
         model_name
     )
+
+
+@app.command()
+def benchmark(batch_size: int = 4):
+    model_name = 'vqgan_imagenet_f16_16384'
+    checkpoint_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.ckpt')
+    config_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.yaml')
+    config = VQGANConfig()
+    vqgan = VqGanClipGenerator(checkpoint_path, config_path, config)
+    vqgan.to('cuda')
+    with open(join(proj_dir, 'benchmarks.txt'), mode='r') as bench_file: 
+        dataset = bench_file.readlines()
+    data_loader = DataLoader(dataset, batch_size=batch_size)
+    for captions in tqdm(data_loader):
+        captions = list(captions)
+        # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
+        generate_and_save_image(vqgan, captions, 'vqgan_imagenet')
 
 
 @app.command()
