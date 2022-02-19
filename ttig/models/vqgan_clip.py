@@ -198,7 +198,7 @@ class VqGanClipGenerator(nn.Module):
         return max(1 - weight / 2, 0)
 
     def l2_norm(self, z: VQCodeTensor, i: int):
-        torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * self.get_mse_weight(i) / 2
+        return torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * self.get_mse_weight(i) / 2
 
     @typechecked
     def update_step(self, z: VQCodeTensor, prompts: EmbedTensor, i: int) -> TensorType[-1]:
