@@ -35,7 +35,8 @@ def spherical_dist_loss(
 ) -> TensorType[-1]:
     x = normalize(x, dim=1)
     y = normalize(y, dim=1)
-    return (x - y).norm(dim=1).div(2).arcsin().pow(2).mul(2).mean(0)
+    dist = (x - y).norm(dim=0).div(2)
+    return (x - y).norm(dim=0).div(2).arcsin().pow(2).mul(2).mean(dim=1)
 
 
 def random_noise_image(w,h):
@@ -80,7 +81,7 @@ class VQGANConfig:
     step_size: float = 0.1
     mse_withzeros: bool = True
     mse_decay_rate: int = 50
-    mse_epoches: int = 7
+    mse_epochs: int = 7
     mse_quantize: bool = True
     max_iterations: int = 500
 
@@ -134,6 +135,7 @@ class VqGanClipGenerator(nn.Module):
             self.config.cut_pow,
             self.config.augments
         )
+        self.mse_decay = 0 if not config.init_weight else config.init_weight / config.mse_epochs
     
     @staticmethod
     def replace_grad(x, y):
@@ -192,13 +194,13 @@ class VqGanClipGenerator(nn.Module):
     
     def get_mse_weight(self, i):
         weight = (
-            self.config.mse_decay * 
-            int((i - (self.config.mse_epoches)) / self.config.mse_decay_rate)
+            self.mse_decay * 
+            int((i - (self.config.mse_epochs)) / self.config.mse_decay_rate)
         )
         return max(1 - weight / 2, 0)
 
     def l2_norm(self, z: VQCodeTensor, i: int):
-        torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * self.get_mse_weight(i) / 2
+        return torch.mean(z ** 2, dim=[1, 2, 3]) * self.get_mse_weight(i) / 2
 
     @typechecked
     def update_step(self, z: VQCodeTensor, prompts: EmbedTensor, i: int) -> TensorType[-1]:
@@ -211,6 +213,7 @@ class VqGanClipGenerator(nn.Module):
             image_encodings.view([self.config.num_cuts, out.shape[0], -1]),
             prompts[None]
         )
+        print(dists.shape)
         if self.config.init_weight:
             mse = self.l2_norm(z, i)
             dists += mse
