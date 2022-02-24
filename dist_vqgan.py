@@ -26,12 +26,6 @@ from CLIP import clip
 import kornia.augmentation as K
 
 
-def setup(rank, world_size):    
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '54321'
-    init_process_group("nccl", init_method='env://', rank=rank, world_size=world_size, timeout=timedelta(seconds=30))
-
-
 
 def noise_gen(shape):
     n, c, h, w = shape
@@ -399,13 +393,15 @@ def ascend_txt(i, model, perceptor, prompts, z, args):
     if args.use_augs:
         cutouts = augs(cutouts)
     if args.noise_fac:
-        facs = cutouts.new_empty([args.cutn, 1, 1, 1]).uniform_(0, args.noise_fac)
+        facs = cutouts.new_empty([args.cutn, 1, 1, 1, 1]).uniform_(0, args.noise_fac)
         cutouts = cutouts + facs * torch.randn_like(cutouts)
     with torch.cuda.amp.autocast():
         iii = perceptor.module.encode_image(normalize(cutouts)).float()
+        print(iii.shape)
     result = []
     if args.init_weight:
-        result.append(torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * get_mse_weight(i) / 2)
+        weighted_l2_norms = torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * get_mse_weight(i) / 2
+        [result.append([norm]) for norm in torch.split(weighted_l2_norms, 1)]
         # result.append(F.mse_loss(z, z_orig) * ((1/torch.tensor((i)*2 + 1))*mse_weight) / 2)
         # with torch.no_grad():
         #   if i > 0 and i%args.mse_decay_rate==0 and i <= args.mse_decay_rate*args.mse_epoches:
@@ -443,16 +439,10 @@ def do_train(model, perceptor, prompt, args):
         z, *_ = model.module.encode(pil_image.to(device).unsqueeze(0) * 2 - 1)
     else:
         one_hot = F.one_hot(torch.randint(n_toks, [arg.batch_size, toksY * toksX], device=device), n_toks).float()
-        # if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
-        #    z = one_hot @ model.quantize.embed.weight
-        # else:
         z = one_hot @ model.module.quantize.embedding.weight
         z = z.view([args.batch_size, toksY, toksX, e_dim]).permute(0, 3, 1, 2)
+    #zs = torch.split(z, 1)  # Tuple of the z's
     z = EMATensor(z, args.ema_val)
-    # if args.mse_withzeros and not args.init_image:
-    # z_orig = torch.zeros_like(z.tensor)
-    # else:
-    #   z_orig = z.tensor.clone()
     opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
     pMs = []
     if args.noise_prompt_weights and args.noise_prompt_seeds:
@@ -464,7 +454,6 @@ def do_train(model, perceptor, prompt, args):
         txt, weight, stop = parse_prompt(p)
         embed = perceptor.module.encode_text(clip.tokenize(txt).to(device)).float()
         pMs.append(Prompt(embed, weight, stop).to(device))
-        # pMs[0].embed = pMs[0].embed + Prompt(embed, weight, stop).embed.to(device)
     for i in tqdm(range(args.max_iter)):
         opt.zero_grad()
         lossAll = ascend_txt(i, model, perceptor, pMs, z, args)
@@ -473,7 +462,7 @@ def do_train(model, perceptor, prompt, args):
         loss = sum(lossAll)
         loss.backward()
         opt.step()
-        z.update()
+        # z.update()
         # if i > 0 and i%args.mse_decay_rate==0 and i <= args.mse_decay_rate * args.mse_epoches:
         #   z = EMATensor(z.average, args.ema_val)
         #   opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
@@ -494,7 +483,7 @@ def main(rank, model, perceptor, data_loader, args):
         do_train(model, perceptor, prompt, args)
 
 
-def make_dataloader(rank, data_dir, batch_size):
+def make_dataloader(data_dir, batch_size):
     with open(os.path.join(data_dir, 'benchmarks.txt')) as txtfile:
         dataset = txtfile.readlines()
     #sampler = DistributedSampler(
