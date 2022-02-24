@@ -442,7 +442,7 @@ def do_train(model, perceptor, prompt, args):
             pil_image = pil_image + args.use_noise * torch.randn_like(pil_image) 
         z, *_ = model.module.encode(pil_image.to(device).unsqueeze(0) * 2 - 1)
     else:
-        one_hot = F.one_hot(torch.randint(n_toks, [arg.batch_size, toksY * toksX], device=device), n_toks).float()
+        one_hot = F.one_hot(torch.randint(n_toks, [args.batch_size, toksY * toksX], device=device), n_toks).float()
         # if args.vqgan_checkpoint == 'vqgan_openimages_f16_8192.ckpt':
         #    z = one_hot @ model.quantize.embed.weight
         # else:

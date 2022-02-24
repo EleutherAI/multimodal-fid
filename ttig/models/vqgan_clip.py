@@ -33,10 +33,10 @@ def spherical_dist_loss(
     x, # One embedding per cut per image in the batch
     y # One embedding for the prompt, extra empty for the number of cuts
 ) -> TensorType[-1]:
-    x = normalize(x, dim=1)
-    y = normalize(y, dim=1)
-    dist = (x - y).norm(dim=0).div(2)
-    return (x - y).norm(dim=0).div(2).arcsin().pow(2).mul(2).mean(dim=1)
+    x = normalize(x, dim=-1)
+    y = normalize(y, dim=-1)
+    # dist = (x - y).norm(dim=0).div(2)
+    return (x - y).norm(dim=-1).div(2).arcsin().pow(2).mul(2).mean(0)
 
 
 def random_noise_image(w,h):
@@ -69,7 +69,7 @@ def random_gradient_image(w,h):
 
 @dataclass
 class VQGANConfig:
-    num_cuts: int = 32
+    num_cuts: int = 64 
     num_iterations: int = 500
     cut_method: str = 'latest' # other option is 'original'
     cut_pow: float = 1.0
@@ -205,15 +205,16 @@ class VqGanClipGenerator(nn.Module):
     @typechecked
     def update_step(self, z: VQCodeTensor, prompts: EmbedTensor, i: int) -> TensorType[-1]:
         out = self.generate_image(z)
+        batch_size = out.shape[0]
+        num_cuts = self.config.num_cuts
         # print(torch.cuda.memory_summary())
         image_encodings: EmbedTensor = self.clip.encode_image(
             self.normalize(self.make_cutouts(out))
         ).float()
         dists = spherical_dist_loss(
-            image_encodings.view([self.config.num_cuts, out.shape[0], -1]),
-            prompts[None]
+            image_encodings.reshape((batch_size, num_cuts, -1)).movedim(0, 1), # makes it so the encodings are [num_cuts, batch_size, embed_dim]
+            prompts[None] # and this is [1, batch_size, embed_dim] and it broadcasts nicely with ^^
         )
-        print(dists.shape)
         if self.config.init_weight:
             mse = self.l2_norm(z, i)
             dists += mse
