@@ -1,29 +1,22 @@
 import argparse
-from datetime import timedelta
+from CLIP import clip
+import kornia.augmentation as K
 import math
-import os
-from pathlib import Path
-import sys
-
-sys.path.append('./taming-transformers')
-
 from omegaconf import OmegaConf
+import os
 from PIL import Image
 import re
-from taming.models import cond_transformer, vqgan
+import sys
 import torch
-from torch.distributed import Backend, init_process_group
-from torch.nn.parallel.distributed import DistributedDataParallel
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 from tqdm import tqdm
 
-from CLIP import clip
-
-import kornia.augmentation as K
+sys.path.append('./taming-transformers')
+from taming.models import cond_transformer, vqgan
 
 
 
@@ -114,7 +107,7 @@ def vector_quantize(x, codebook):
     x_q = F.one_hot(indices, codebook.shape[0]).to(d.dtype) @ codebook
     return replace_grad(x_q, x)
 
-
+"""
 class Prompt(nn.Module):
     def __init__(self, embed, weight=1., stop=float('-inf')):
         super().__init__()
@@ -130,6 +123,16 @@ class Prompt(nn.Module):
         dists = input_normed.sub(embed_normed).norm(dim=2).div(2).arcsin().pow(2).mul(2)
         dists = dists * self.weight.sign()
         return self.weight.abs() * replace_grad(dists, torch.maximum(dists, self.stop)).mean()
+"""
+
+def spherical_dist_loss(
+    x, # One embedding per cut per image in the batch
+    y # One embedding for the prompt, extra empty for the number of cuts
+):
+    x = normalize(x, dim=-1)
+    y = normalize(y, dim=-1)
+    # dist = (x - y).norm(dim=0).div(2)
+    return (x - y).norm(dim=-1).div(2).arcsin().pow(2).mul(2).mean(0)
 
 
 def parse_prompt(prompt):
@@ -397,11 +400,10 @@ def ascend_txt(i, model, perceptor, prompts, z, args):
         cutouts = cutouts + facs * torch.randn_like(cutouts)
     with torch.cuda.amp.autocast():
         iii = perceptor.module.encode_image(normalize(cutouts)).float()
-        print(iii.shape)
-    result = []
+    result = spherical_dist_loss(iii, prompts)
     if args.init_weight:
         weighted_l2_norms = torch.mean(z.tensor ** 2, dim=[1, 2, 3]) * get_mse_weight(i) / 2
-        [result.append([norm]) for norm in torch.split(weighted_l2_norms, 1)]
+        result += weighted_l2_norms
         # result.append(F.mse_loss(z, z_orig) * ((1/torch.tensor((i)*2 + 1))*mse_weight) / 2)
         # with torch.no_grad():
         #   if i > 0 and i%args.mse_decay_rate==0 and i <= args.mse_decay_rate*args.mse_epoches:
@@ -415,8 +417,6 @@ def ascend_txt(i, model, perceptor, prompts, z, args):
         #     else:
         #       mse_weight = 0
         #       print(f"updated mse weight: {mse_weight}")
-    for prompt in prompts:
-        result.append(prompt(iii))
     return result
 
 
@@ -444,25 +444,32 @@ def do_train(model, perceptor, prompt, args):
     #zs = torch.split(z, 1)  # Tuple of the z's
     z = EMATensor(z, args.ema_val)
     opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
-    pMs = []
+    #pMs = []
+    """
     if args.noise_prompt_weights and args.noise_prompt_seeds:
         for seed, weight in zip(args.noise_prompt_seeds, args.noise_prompt_weights):
             gen = torch.Generator().manual_seed(seed)
             embed = torch.empty([1, perceptor.module.visual.output_dim]).normal_(generator=gen)
-            pMs.append(Prompt(embed, weight).to(device))
+            pMs.append(embed)
+            # pMs.append(Prompt(embed, weight).to(device))
+    """
+    prompt_embeds = perceptor.module.encode_text(clip.tokenize(prompt).to(device)).float()
+    """
     for p in prompt:
         txt, weight, stop = parse_prompt(p)
-        embed = perceptor.module.encode_text(clip.tokenize(txt).to(device)).float()
+        embed = perceptor.module.encode_text(clip.tokenize(prompt).to(device)).float()
         pMs.append(Prompt(embed, weight, stop).to(device))
+    """
     for i in tqdm(range(args.max_iter)):
         opt.zero_grad()
-        lossAll = ascend_txt(i, model, perceptor, pMs, z, args)
+        lossAll = ascend_txt(i, model, perceptor, prompt_embeds, z, args)
         #if i % args.display_freq == 0:
         #    checkin(i, z, lossAll)
-        loss = sum(lossAll)
+        #loss = sum(lossAll)
+        loss = lossAll.sum()
         loss.backward()
         opt.step()
-        # z.update()
+        z.update()
         # if i > 0 and i%args.mse_decay_rate==0 and i <= args.mse_decay_rate * args.mse_epoches:
         #   z = EMATensor(z.average, args.ema_val)
         #   opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
