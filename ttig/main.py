@@ -4,11 +4,12 @@ import sys
 
 proj_dir = abspath(dirname(dirname(__file__)))
 sys.path.append(proj_dir) # TODO: Proper packaging so this isn't necessary
-from CLIP import clip
+import ray
 import re
 import torch
 from torch.utils.data import DataLoader
 from torchvision.transforms.functional import to_pil_image
+import ttig
 from ttig.dataset import CoCa3mTextDataset
 from ttig.mmfid import make_reference_statistics, calc_mmfid_from_model
 from ttig.models.model import MultiModalFeatureExtractor
@@ -36,8 +37,7 @@ def write_images_to_disk(captions, images, model_name):
         image.save(f"{image_dir}/{clean_caption}.png")
 
 
-def generate_and_save_image(model, captions, text_embs, model_name):
-    image_tensors = model(text_embs)
+def generate_and_save_image(captions, image_tensors, model_name):
     image_tensors.to('cpu').detach()
     write_images_to_disk(
         captions,
@@ -46,22 +46,40 @@ def generate_and_save_image(model, captions, text_embs, model_name):
     )
 
 
+
+@ray.remote(num_gpus=1)
+class ModelGenerator:
+    def __init__(self):
+        model_name = 'vqgan_imagenet_f16_16384'
+        checkpoint_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.ckpt')
+        config_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.yaml')
+        config = VQGANConfig()
+        self.model = VqGanClipGenerator(checkpoint_path, config_path, config)
+        self.model.to('cuda')
+    
+    def generate(self, texts):
+        return self.model.generate(texts)
+
+
 @app.command()
-def benchmark(batch_size: int = 4):
-    model_name = 'vqgan_imagenet_f16_16384'
-    checkpoint_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.ckpt')
-    config_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.yaml')
-    config = VQGANConfig()
-    vqgan = VqGanClipGenerator(checkpoint_path, config_path, config)
-    vqgan.to('cuda:0')
-    clip_model = clip.load('ViT-B/16')[0].eval().requires_grad_(False)
-    vqgan = torch.nn.DataParallel(vqgan)
+def benchmark(batch_size: int = 1, seed: int = 1532984):
+    torch.manual_seed(seed)
+    ray.init(runtime_env={'py_modules': [ttig]})
+    #model_name = 'vqgan_imagenet_f16_16384'
+    # checkpoint_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.ckpt')
+    #config_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.yaml')
+    #config = VQGANConfig()
+    #gen_args = (checkpoint_path, config_path, config)
+    actors = [ModelGenerator.remote() for _ in range(torch.cuda.device_count())]
+    vqgan_pool = ray.util.ActorPool(actors)
+    # clip_model = clip.load('ViT-B/16')[0].eval().requires_grad_(False)
+    # vqgan = torch.nn.DataParallel(vqgan)
     with open(join(proj_dir, 'benchmarks.txt'), mode='r') as bench_file: 
         dataset = [line.strip() for line in bench_file.readlines()]
     data_loader = DataLoader(dataset, batch_size=batch_size)
-    for captions in tqdm(data_loader):
-        text_embs = clip_model.encode_text(clip.tokenize(captions).to('cuda:0'))
-        generate_and_save_image(vqgan, captions, text_embs, 'vqgan_imagenet')
+    jobs = vqgan_pool.map_unordered(lambda actor, batch: actor.generate.remote(batch), data_loader)
+    for captions, image_tensors in tqdm(jobs):
+        generate_and_save_image(captions, image_tensors, 'vqgan_imagenet')
 
 
 @app.command()

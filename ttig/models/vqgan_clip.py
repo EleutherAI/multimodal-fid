@@ -5,6 +5,7 @@ import math
 import numpy as np
 from omegaconf import OmegaConf
 from PIL import ImageFile, Image
+import ray
 from taming.models.vqgan import VQModel
 import torch
 import torch.nn.functional as F
@@ -37,6 +38,9 @@ def spherical_dist_loss(
     x = normalize(x, dim=-1)
     y = normalize(y, dim=-1)
     # dist = (x - y).norm(dim=0).div(2)
+    # print(x.shape)
+    # print(y.shape)
+    # print((x - y).norm(dim=-1).shape)
     return (x - y).norm(dim=-1).div(2).arcsin().pow(2).mul(2).mean(0)
 
 
@@ -55,10 +59,8 @@ def gradient_2d(start, stop, width, height, is_horizontal):
 
 def gradient_3d(width, height, start_list, stop_list, is_horizontal_list):
     result = np.zeros((height, width, len(start_list)), dtype=float)
-
     for i, (start, stop, is_horizontal) in enumerate(zip(start_list, stop_list, is_horizontal_list)):
         result[:, :, i] = gradient_2d(start, stop, width, height, is_horizontal)
-
     return result
 
     
@@ -163,7 +165,7 @@ class MakeCutouts(nn.Module):
             cutouts = self.augs(cutouts)
 
         if self.noise_fac:
-           facs = cutouts.new_empty([cutouts.shape[0], 1, 1, 1]).uniform_(0, args.noise_fac)
+           facs = cutouts.new_empty([cutouts.shape[0], 1, 1, 1]).uniform_(0, self.noise_fac)
            cutouts = cutouts + facs * torch.randn_like(cutouts)
         return ClampWithGrad.apply(cutouts, 0, 1)
 
@@ -179,19 +181,13 @@ class VQGANConfig:
     learning_rate: float = 0.1
     init_noise: Optional[str] = None
     init_weight: int =  2.0
-    augments: Optional[List] = None
-    size: Tuple[int] = (256, 256)
-    step_size: float = 0.1
+    size: Tuple[int] = (512, 512)
+    step_size: float = 0.95
     mse_withzeros: bool = True
     mse_decay_rate: int = 50
     mse_epochs: int = 7
     mse_quantize: bool = True
     max_iterations: int = 500
-    
-    def __post_init__(self):
-        if self.augments is None:
-            # TODO: Make this more readable
-            self.augments = ['Hf','Af', 'Pe', 'Ji', 'Er'] # *sigh*
 
 
 def load_vqgan_model(checkpoint_path: str, config_path: str):
@@ -234,9 +230,9 @@ class VqGanClipGenerator(nn.Module):
 
     def __init__(self, checkpoint_path, model_config_path, config, clip_model_type='ViT-B/32'):
         super().__init__()
-        self.vqgan = load_vqgan_model(checkpoint_path, model_config_path).eval().requires_grad_(False)
-        self.clip = clip.load(clip_model_type)[0].eval().requires_grad_(False)
-        # self.device = device
+        self.device = torch.device('cuda')
+        self.vqgan = load_vqgan_model(checkpoint_path, model_config_path).eval().requires_grad_(False).to(self.device)
+        self.clip = clip.load(clip_model_type)[0].eval().requires_grad_(False).to(self.device)
         self.config = config
         self.normalizer = transforms.Normalize(
             mean=[0.48145466, 0.4578275, 0.40821073],
@@ -245,7 +241,7 @@ class VqGanClipGenerator(nn.Module):
         self.augs = nn.Sequential(
             K.RandomHorizontalFlip(p=0.5),
             K.RandomAffine(degrees=30, translate=0.1, p=0.8, padding_mode='border'), # padding_mode=2
-            K.RandomPerspective(0.2,p=0.4, ),
+            K.RandomPerspective(0.2, p=0.4, ),
             K.ColorJitter(hue=0.01, saturation=0.01, p=0.7),
         )
         self.cutout_fn = MakeCutouts(
@@ -294,9 +290,6 @@ class VqGanClipGenerator(nn.Module):
 
     def make_cutouts(self, x: ImageTensor):
         cutouts = self.cutout_fn(x)
-        #if self.config.noise_fac:
-        #    facs = cutouts.new_empty([self.config.num_cuts, 1, 1, 1]).uniform_(0, self.config.noise_fac)
-        #    cutouts = cutouts + facs * torch.randn_like(cutouts)
         return cutouts
 
     @property
@@ -336,8 +329,9 @@ class VqGanClipGenerator(nn.Module):
         cutouts = self.normalize(self.make_cutouts(out))
         # print(cutouts.shape)
         image_encodings: EmbedTensor = self.clip.encode_image(cutouts).float()
+        # print(image_encodings.shape)
         dists = spherical_dist_loss(
-            image_encodings.reshape((batch_size, num_cuts, -1)).movedim(0, 1), # makes it so the encodings are [num_cuts, batch_size, embed_dim]
+            image_encodings, # .reshape((batch_size, num_cuts, -1)).movedim(0, 1), # makes it so the encodings are [num_cuts, batch_size, embed_dim]
             prompts[None] # and this is [1, batch_size, embed_dim] and it broadcasts nicely with ^^
         )
         if self.config.init_weight:
@@ -346,15 +340,13 @@ class VqGanClipGenerator(nn.Module):
         del image_encodings
         return dists # return loss
 
-    def forward(self, texts: List[str]) -> ImageTensor:
+    def generate(self, texts: List[str]) -> ImageTensor:
         if isinstance(texts, str):
             texts = [texts]
-        device = self.vqgan.quantize.embedding.weight.device
         batch_size = len(texts)
-        f = 2 ** (self.vqgan.decoder.num_resolutions - 1) # TODO: What number is this usually?
+        text_embs = self.clip.encode_text(clip.tokenize(texts).to('cuda'))
+        f = 2 ** (self.vqgan.decoder.num_resolutions - 1)
         toksX, toksY = self.config.size[0] // f, self.config.size[1] // f
-        #sides = (toksX * f, toksY * f)
-        # TODO: What is this?????
         e_dim = self.vqgan.quantize.e_dim
         n_toks = self.vqgan.quantize.n_e
         z_min = self.vqgan.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
@@ -362,33 +354,19 @@ class VqGanClipGenerator(nn.Module):
         if self.config.init_noise in ('pixels', 'gradient'):
             z = self.random_image(self.config.init_noise, self.config.size, batch_size)
         else:
-            # one_hot_embeds = one_hot(torch.randint(n_toks, [batch_size, toksY * toksX]), n_toks).float()
-            one_hot_embeds = one_hot(torch.randint(n_toks, [batch_size, toksY * toksX], device=device), n_toks).float()
+            one_hot_embeds = one_hot(torch.randint(n_toks, [batch_size, toksY * toksX], device=self.device), n_toks).float()
             z = one_hot_embeds @ self.vqgan.quantize.embedding.weight
             z = z.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2) 
-        z.requires_grad_(True) 
+        z.requires_grad_(True)
         z = EMATensor(z, self.config.ema_val)   
-        prompts = []
-        # CLIP tokenize/encode
-        # TODO: Figure out whether this is for multiple-prompts-but-one-image or a batch of images
-        #prompts: EmbedTensor = self.clip.encode_text(clip.tokenize(texts).to(device)).float()
-        #prompts: EmbedTensor = self.clip.encode_text(clip.tokenize(texts).to(self.device)).float()
-        #prompts.append(Prompt(embed).to(self.device))
         # Set the optimiser
-        opt = optim.AdamW(z.parameters(), lr=self.config.step_size)
-        # for i in tqdm(range(self.config.max_iterations)):
+        opt = optim.Adam(z.parameters(), lr=self.config.step_size)
         for i in range(self.config.max_iterations):
-            # Change text prompt
-            # if i % 50 == 0:
-            #     print(torch.cuda.memory_summary())
             opt.zero_grad(set_to_none=True)
-            batch_loss = self.update_step(z.tensor, texts, i)
+            batch_loss = self.update_step(z.tensor, text_embs, i)
             loss = batch_loss.sum()
             loss.backward()
             opt.step()
             z.update()
-            #with torch.no_grad():
-            #with torch.inference_mode():
-            #    z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
-        return self.generate_image(z.average)
+        return texts, self.generate_image(z.average)
 

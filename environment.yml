@@ -31,6 +31,7 @@ dependencies:
     - test-tube>=0.7.5
     - einops==0.3.0
     - more-itertools>=8.0.0
+    - ray
     - torchtyping
     - typeguard
     - typer
