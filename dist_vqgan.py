@@ -155,7 +155,6 @@ class MakeCutouts(nn.Module):
         self.cut_size = cut_size
         self.cutn = cutn
         self.cut_pow = cut_pow
-
         self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
         self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
 
@@ -168,33 +167,23 @@ class MakeCutouts(nn.Module):
         min_size = min(sideX, sideY, self.cut_size)
         cutouts = []
         cutouts_full = []
-        
         min_size_width = min(sideX, sideY)
         lower_bound = float(self.cut_size/min_size_width)
         
-        for ii in range(self.cutn):
-            
-            
-          # size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
-          size = int(min_size_width*torch.zeros(1,).normal_(mean=.8, std=.3).clip(lower_bound, 1.)) # replace .5 with a result for 224 the default large size is .95
-          # size = int(min_size_width*torch.zeros(1,).normal_(mean=.9, std=.3).clip(lower_bound, .95)) # replace .5 with a result for 224 the default large size is .95
-
-          offsetx = torch.randint(0, sideX - size + 1, ())
-          offsety = torch.randint(0, sideY - size + 1, ())
-          cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
-          cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
-
-        
+        for _ in range(self.cutn):
+            # size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
+            size = int(min_size_width*torch.zeros(1,).normal_(mean=.8, std=.3).clip(lower_bound, 1.)) # replace .5 with a result for 224 the default large size is .95
+            # size = int(min_size_width*torch.zeros(1,).normal_(mean=.9, std=.3).clip(lower_bound, .95)) # replace .5 with a result for 224 the default large size is .95
+            offsetx = torch.randint(0, sideX - size + 1, ())
+            offsety = torch.randint(0, sideY - size + 1, ())
+            cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
+            cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
         cutouts = torch.cat(cutouts, dim=0)
-
         # if args.use_augs:
         #   cutouts = augs(cutouts)
-
         # if args.noise_fac:
         #   facs = cutouts.new_empty([cutouts.shape[0], 1, 1, 1]).uniform_(0, args.noise_fac)
         #   cutouts = cutouts + facs * torch.randn_like(cutouts)
-        
-
         return clamp_with_grad(cutouts, 0, 1)
 
 
@@ -337,7 +326,6 @@ get_mse_weight = lambda i: max(1-(mse_decay* int((i-(config.mse_epoches))/config
 
 # <AUGMENTATIONS>
 augs = nn.Sequential(
-    
     K.RandomHorizontalFlip(p=0.5),
     K.RandomAffine(degrees=30, translate=0.1, p=0.8, padding_mode='border'), # padding_mode=2
     K.RandomPerspective(0.2,p=0.4, ),
@@ -436,7 +424,7 @@ def do_train(model, perceptor, prompt, args):
         pil_image = TF.to_tensor(pil_image)
         if args.use_noise:
             pil_image = pil_image + args.use_noise * torch.randn_like(pil_image) 
-        z, *_ = model.module.encode(pil_image.to(device).unsqueeze(0) * 2 - 1)
+        z, *_ = model.module.encode(pil_image.unsqueeze(0) * 2 - 1)
     else:
         one_hot = F.one_hot(torch.randint(n_toks, [args.batch_size, toksY * toksX], device=device), n_toks).float()
         z = one_hot @ model.module.quantize.embedding.weight
@@ -533,6 +521,7 @@ if __name__ == "__main__":
    # )
     model = load_vqgan_model(config.vqgan_config, config.vqgan_checkpoint)
     perceptor = clip.load(config.clip_model, jit=False)[0].eval().requires_grad_(False)
-    data_loader = make_dataloader(rank, data_fp, args.batch_size)
+    data_loader = make_dataloader(data_fp, args.batch_size)
+    config.batch_size = args.batch_size
     print(f'Rank {rank}: loaded models and beginning generation')
     main(rank, model, perceptor, data_loader, config)

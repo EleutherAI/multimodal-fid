@@ -1,11 +1,13 @@
 import clip
-from collections import namedtuple
 from dataclasses import dataclass
+import kornia.augmentation as K
+import math
 import numpy as np
 from omegaconf import OmegaConf
 from PIL import ImageFile, Image
 from taming.models.vqgan import VQModel
 import torch
+import torch.nn.functional as F
 from torch.nn.functional import normalize, one_hot
 from torch import nn, optim
 from torchvision.transforms import functional as tf
@@ -14,7 +16,6 @@ from tqdm import tqdm
 from torchtyping import TensorType, patch_typeguard
 from typeguard import typechecked
 from typing import List, Optional, Tuple
-from vqgan_clip.masking import MakeCutouts, MakeCutoutsOrig
 from vqgan_clip.grad import ReplaceGrad, ClampWithGrad
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -67,12 +68,114 @@ def random_gradient_image(w,h):
     return random_image
 
 
+def noise_gen(shape):
+    n, c, h, w = shape
+    noise = torch.zeros([n, c, 1, 1])
+    for i in reversed(range(5)):
+        h_cur, w_cur = h // 2**i, w // 2**i
+        noise = F.interpolate(noise, (h_cur, w_cur), mode='bicubic', align_corners=False)
+        noise += torch.randn([n, c, h_cur, w_cur]) / 5
+    return noise
+
+
+def sinc(x):
+    return torch.where(x != 0, torch.sin(math.pi * x) / (math.pi * x), x.new_ones([]))
+
+
+def lanczos(x, a):
+    cond = torch.logical_and(-a < x, x < a)
+    out = torch.where(cond, sinc(x) * sinc(x/a), x.new_zeros([]))
+    return out / out.sum()
+
+
+def ramp(ratio, width):
+    n = math.ceil(width / ratio + 1)
+    out = torch.empty([n])
+    cur = 0
+    for i in range(out.shape[0]):
+        out[i] = cur
+        cur += ratio
+    return torch.cat([-out[1:].flip([0]), out])[1:-1]
+
+
+def resample(input, size, align_corners=True):
+    n, c, h, w = input.shape
+    dh, dw = size
+
+    input = input.view([n * c, 1, h, w])
+
+    if dh < h:
+        kernel_h = lanczos(ramp(dh / h, 2), 2).to(input.device, input.dtype)
+        pad_h = (kernel_h.shape[0] - 1) // 2
+        input = F.pad(input, (0, 0, pad_h, pad_h), 'reflect')
+        input = F.conv2d(input, kernel_h[None, None, :, None])
+
+    if dw < w:
+        kernel_w = lanczos(ramp(dw / w, 2), 2).to(input.device, input.dtype)
+        pad_w = (kernel_w.shape[0] - 1) // 2
+        input = F.pad(input, (pad_w, pad_w, 0, 0), 'reflect')
+        input = F.conv2d(input, kernel_w[None, None, None, :])
+
+    input = input.view([n, c, h, w])
+    return F.interpolate(input, size, mode='bicubic', align_corners=align_corners)
+
+
+class MakeCutouts(nn.Module):
+    def __init__(self, cut_size, cutn, cut_pow=1., noise_fac=0.1, augs=None):
+        super().__init__()
+        self.cut_size = cut_size
+        self.cutn = cutn
+        self.cut_pow = cut_pow
+        self.augs = augs
+        self.noise_fac = noise_fac
+        self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
+        self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
+
+    def set_cut_pow(self, cut_pow):
+      self.cut_pow = cut_pow
+
+    def forward(self, input):
+        sideY, sideX = input.shape[2:4]
+        max_size = min(sideX, sideY)
+        min_size = min(sideX, sideY, self.cut_size)
+        cutouts = []
+        cutouts_full = []
+        
+        min_size_width = min(sideX, sideY)
+        lower_bound = float(self.cut_size/min_size_width)
+        
+        for ii in range(self.cutn):
+            
+            
+          # size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
+          size = int(min_size_width*torch.zeros(1,).normal_(mean=.8, std=.3).clip(lower_bound, 1.)) # replace .5 with a result for 224 the default large size is .95
+          # size = int(min_size_width*torch.zeros(1,).normal_(mean=.9, std=.3).clip(lower_bound, .95)) # replace .5 with a result for 224 the default large size is .95
+
+          offsetx = torch.randint(0, sideX - size + 1, ())
+          offsety = torch.randint(0, sideY - size + 1, ())
+          cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
+          cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
+
+        
+        cutouts = torch.cat(cutouts, dim=0)
+
+        if self.augs:
+            cutouts = self.augs(cutouts)
+
+        if self.noise_fac:
+           facs = cutouts.new_empty([cutouts.shape[0], 1, 1, 1]).uniform_(0, args.noise_fac)
+           cutouts = cutouts + facs * torch.randn_like(cutouts)
+        return ClampWithGrad.apply(cutouts, 0, 1)
+
+
 @dataclass
 class VQGANConfig:
     num_cuts: int = 64 
     num_iterations: int = 500
     cut_method: str = 'latest' # other option is 'original'
     cut_pow: float = 1.0
+    ema_val: float = 0.99
+    noise_fac: float = 0.1
     learning_rate: float = 0.1
     init_noise: Optional[str] = None
     init_weight: int =  2.0
@@ -84,7 +187,6 @@ class VQGANConfig:
     mse_epochs: int = 7
     mse_quantize: bool = True
     max_iterations: int = 500
-
     
     def __post_init__(self):
         if self.augments is None:
@@ -100,40 +202,58 @@ def load_vqgan_model(checkpoint_path: str, config_path: str):
     return model
 
 
-CutoutConfig = namedtuple('CutoutConfig', ['cut_pow', 'augments']) # Fucking cursed 
-# TODO: refactor vqgan-clip code so that their cutout making class isn't dependent on their command line args....
 
+class EMATensor(nn.Module):
+    """implmeneted by Katherine Crowson"""
+    def __init__(self, tensor, decay):
+        super().__init__()
+        self.tensor = nn.Parameter(tensor)
+        self.register_buffer('biased', torch.zeros_like(tensor))
+        self.register_buffer('average', torch.zeros_like(tensor))
+        self.decay = decay
+        self.register_buffer('accum', torch.tensor(1.))
+        self.update()
+    
+    @torch.no_grad()
+    def update(self):
+        if not self.training:
+            raise RuntimeError('update() should only be called during training')
+        self.accum *= self.decay
+        self.biased.mul_(self.decay)
+        self.biased.add_((1 - self.decay) * self.tensor)
+        self.average.copy_(self.biased)
+        self.average.div_(1 - self.accum)
 
-def cutout_factory(cut_method: str, cut_size, num_cuts: int, cut_pow: float, augments: List[str]):
-    not_args = CutoutConfig(cut_pow, augments)
-    if cut_method == 'original':
-        return MakeCutoutsOrig(not_args, cut_size, num_cuts)
-    elif cut_method == 'latest':
-        cutouts = MakeCutouts(not_args, cut_size, num_cuts)
-        cutouts.noise_fac = False
-        return cutouts
-    else:
-        raise ValueError(f'Not recognized cutout-making type {cut_method}')
+    def forward(self):
+        if self.training:
+            return self.tensor
+        return self.average
 
 
 class VqGanClipGenerator(nn.Module):
 
-    def __init__(self, checkpoint_path, model_config_path, config, clip_model_type='ViT-B/16', device='cuda:0'):
+    def __init__(self, checkpoint_path, model_config_path, config, clip_model_type='ViT-B/32'):
         super().__init__()
-        self.vqgan = load_vqgan_model(checkpoint_path, model_config_path).eval().requires_grad_(False).to(device)
-        self.clip = clip.load(clip_model_type)[0].eval().requires_grad_(False).to(device)
-        self.device = device
+        self.vqgan = load_vqgan_model(checkpoint_path, model_config_path).eval().requires_grad_(False)
+        self.clip = clip.load(clip_model_type)[0].eval().requires_grad_(False)
+        # self.device = device
         self.config = config
         self.normalizer = transforms.Normalize(
             mean=[0.48145466, 0.4578275, 0.40821073],
             std=[0.26862954, 0.26130258, 0.27577711]
         )
-        self.cutout_fn = cutout_factory(
-            self.config.cut_method,
+        self.augs = nn.Sequential(
+            K.RandomHorizontalFlip(p=0.5),
+            K.RandomAffine(degrees=30, translate=0.1, p=0.8, padding_mode='border'), # padding_mode=2
+            K.RandomPerspective(0.2,p=0.4, ),
+            K.ColorJitter(hue=0.01, saturation=0.01, p=0.7),
+        )
+        self.cutout_fn = MakeCutouts(
             self.clip.visual.input_resolution,
             self.config.num_cuts,
             self.config.cut_pow,
-            self.config.augments
+            self.config.noise_fac,
+            self.augs
         )
         self.mse_decay = 0 if not config.init_weight else config.init_weight / config.mse_epochs
     
@@ -168,12 +288,16 @@ class VqGanClipGenerator(nn.Module):
             tf.to_tensor(im.resize(self.vqgan_sides, Image.LANCZOS)).unsqueeze(0)
             for im in images
         ]
-        pil_tensor = torch.concat(pil_images).to(self.device)
+        pil_tensor = torch.concat(pil_images) # .to(self.device)
         z, *_ = self.vqgan.encode(pil_tensor * 2 - 1)
         return z
 
     def make_cutouts(self, x: ImageTensor):
-        return self.cutout_fn(x)
+        cutouts = self.cutout_fn(x)
+        #if self.config.noise_fac:
+        #    facs = cutouts.new_empty([self.config.num_cuts, 1, 1, 1]).uniform_(0, self.config.noise_fac)
+        #    cutouts = cutouts + facs * torch.randn_like(cutouts)
+        return cutouts
 
     @property
     def codebook(self):
@@ -190,6 +314,7 @@ class VqGanClipGenerator(nn.Module):
 
     def generate_image(self, z: VQCodeTensor) -> ImageTensor:
         z_q = self.vector_quantize(z.movedim(1, 3)).movedim(3, 1)
+        # print(z_q.shape)
         return self.clamp_with_grad(self.vqgan.decode(z_q).add(1).div(2), 0, 1)
     
     def get_mse_weight(self, i):
@@ -208,9 +333,9 @@ class VqGanClipGenerator(nn.Module):
         batch_size = out.shape[0]
         num_cuts = self.config.num_cuts
         # print(torch.cuda.memory_summary())
-        image_encodings: EmbedTensor = self.clip.encode_image(
-            self.normalize(self.make_cutouts(out))
-        ).float()
+        cutouts = self.normalize(self.make_cutouts(out))
+        # print(cutouts.shape)
+        image_encodings: EmbedTensor = self.clip.encode_image(cutouts).float()
         dists = spherical_dist_loss(
             image_encodings.reshape((batch_size, num_cuts, -1)).movedim(0, 1), # makes it so the encodings are [num_cuts, batch_size, embed_dim]
             prompts[None] # and this is [1, batch_size, embed_dim] and it broadcasts nicely with ^^
@@ -221,10 +346,10 @@ class VqGanClipGenerator(nn.Module):
         del image_encodings
         return dists # return loss
 
-    @typechecked
-    def generate(self, texts: List[str]) -> ImageTensor:
+    def forward(self, texts: List[str]) -> ImageTensor:
         if isinstance(texts, str):
             texts = [texts]
+        device = self.vqgan.quantize.embedding.weight.device
         batch_size = len(texts)
         f = 2 ** (self.vqgan.decoder.num_resolutions - 1) # TODO: What number is this usually?
         toksX, toksY = self.config.size[0] // f, self.config.size[1] // f
@@ -237,30 +362,33 @@ class VqGanClipGenerator(nn.Module):
         if self.config.init_noise in ('pixels', 'gradient'):
             z = self.random_image(self.config.init_noise, self.config.size, batch_size)
         else:
-            one_hot_embeds = one_hot(torch.randint(n_toks, [batch_size, toksY * toksX], device=self.device), n_toks).float()
+            # one_hot_embeds = one_hot(torch.randint(n_toks, [batch_size, toksY * toksX]), n_toks).float()
+            one_hot_embeds = one_hot(torch.randint(n_toks, [batch_size, toksY * toksX], device=device), n_toks).float()
             z = one_hot_embeds @ self.vqgan.quantize.embedding.weight
             z = z.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2) 
-        z.requires_grad_(True)    
+        z.requires_grad_(True) 
+        z = EMATensor(z, self.config.ema_val)   
         prompts = []
-
         # CLIP tokenize/encode
         # TODO: Figure out whether this is for multiple-prompts-but-one-image or a batch of images
-        
-        prompts: EmbedTensor = self.clip.encode_text(clip.tokenize(texts).to(self.device)).float()
+        #prompts: EmbedTensor = self.clip.encode_text(clip.tokenize(texts).to(device)).float()
+        #prompts: EmbedTensor = self.clip.encode_text(clip.tokenize(texts).to(self.device)).float()
         #prompts.append(Prompt(embed).to(self.device))
         # Set the optimiser
-        opt = optim.AdamW([z], lr=self.config.step_size)
-        for i in tqdm(range(self.config.max_iterations)):
+        opt = optim.AdamW(z.parameters(), lr=self.config.step_size)
+        # for i in tqdm(range(self.config.max_iterations)):
+        for i in range(self.config.max_iterations):
             # Change text prompt
             # if i % 50 == 0:
             #     print(torch.cuda.memory_summary())
             opt.zero_grad(set_to_none=True)
-            batch_loss = self.update_step(z, prompts, i)
+            batch_loss = self.update_step(z.tensor, texts, i)
             loss = batch_loss.sum()
             loss.backward()
             opt.step()
+            z.update()
             #with torch.no_grad():
-            with torch.inference_mode():
-                z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
-        return self.generate_image(z)
+            #with torch.inference_mode():
+            #    z.copy_(z.maximum(z_min).minimum(z_max))  # what does this do?
+        return self.generate_image(z.average)
 

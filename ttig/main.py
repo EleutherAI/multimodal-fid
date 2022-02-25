@@ -4,6 +4,7 @@ import sys
 
 proj_dir = abspath(dirname(dirname(__file__)))
 sys.path.append(proj_dir) # TODO: Proper packaging so this isn't necessary
+from CLIP import clip
 import re
 import torch
 from torch.utils.data import DataLoader
@@ -29,13 +30,14 @@ def clean_text(text):
 def write_images_to_disk(captions, images, model_name):
     image_dir = f'{proj_dir}/images/{model_name}'
     os.makedirs(image_dir, exist_ok=True)
+    print(f'captions: {captions}')
     for caption, image in zip(captions, images):
-        caption = clean_text(caption)
-        image.save(f"{image_dir}/{caption}.png")
+        clean_caption = clean_text(caption)
+        image.save(f"{image_dir}/{clean_caption}.png")
 
 
-def generate_and_save_image(model, captions, model_name):
-    image_tensors = model.generate(captions)
+def generate_and_save_image(model, captions, text_embs, model_name):
+    image_tensors = model(text_embs)
     image_tensors.to('cpu').detach()
     write_images_to_disk(
         captions,
@@ -51,14 +53,15 @@ def benchmark(batch_size: int = 4):
     config_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.yaml')
     config = VQGANConfig()
     vqgan = VqGanClipGenerator(checkpoint_path, config_path, config)
-    vqgan.to('cuda')
+    vqgan.to('cuda:0')
+    clip_model = clip.load('ViT-B/16')[0].eval().requires_grad_(False)
+    vqgan = torch.nn.DataParallel(vqgan)
     with open(join(proj_dir, 'benchmarks.txt'), mode='r') as bench_file: 
-        dataset = bench_file.readlines()
+        dataset = [line.strip() for line in bench_file.readlines()]
     data_loader = DataLoader(dataset, batch_size=batch_size)
     for captions in tqdm(data_loader):
-        captions = list(captions)
-        # prompts = tokenizer(captions, padding='longest', truncation=True, return_tensors='pt')
-        generate_and_save_image(vqgan, captions, 'vqgan_imagenet')
+        text_embs = clip_model.encode_text(clip.tokenize(captions).to('cuda:0'))
+        generate_and_save_image(vqgan, captions, text_embs, 'vqgan_imagenet')
 
 
 @app.command()
