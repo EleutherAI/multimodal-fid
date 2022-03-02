@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms.functional import to_pil_image
 import ttig
 from ttig.dataset import CoCa3mTextDataset
-from ttig.mmfid import make_reference_statistics, calc_mmfid_from_model
+from ttig.calc_metrics import make_reference_statistics, calc_mmfid_from_model
 from ttig.models.model import MultiModalFeatureExtractor
 from ttig.models.vqgan_clip import VqGanClipGenerator, VQGANConfig
 from tqdm import tqdm

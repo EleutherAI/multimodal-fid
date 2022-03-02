@@ -2,19 +2,21 @@ import argparse
 import math
 from pathlib import Path
 import sys
-
+import re
+import os
 sys.path.append('./taming-transformers')
 
-from Ipython import display
+#from IPython import display
 from omegaconf import OmegaConf
-from PIL import Image, ImageDraw
+from PIL import Image
 from taming.models import cond_transformer, vqgan
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import transforms
 from torchvision.transforms import functional as TF
-from tqdm.notebook import tqdm
+from tqdm import tqdm
+import numpy as np
 
 from CLIP import clip
 
@@ -276,17 +278,19 @@ class EMATensor(nn.Module):
             return self.tensor
         return self.average
 
+import sys
+
 args = argparse.Namespace(
     
-    prompts=sys.argv[1:],
+    prompts=sys.argv[1],
     size=[640, 512], 
     init_image= None,
     init_weight= 2.0,
 
     # clip model settings
     clip_model='ViT-B/32',
-    vqgan_config='vqgan_imagenet_f16_16384.yaml',         
-    vqgan_checkpoint='vqgan_imagenet_f16_16384.ckpt',
+    vqgan_config='checkpoints/vqgan/vqgan_imagenet_f16_16384.yaml',         
+    vqgan_checkpoint='checkpoints/vqgan/vqgan_imagenet_f16_16384.ckpt',
     step_size=0.95,
     
     # cutouts / crops
@@ -300,7 +304,7 @@ args = argparse.Namespace(
     noise_fac= 0.1,
     ema_val = 0.99,
 
-    record_generation=True,
+    record_generation=False,
 
     # noise and other constraints
     use_noise = None,
@@ -333,53 +337,54 @@ augs = nn.Sequential(
     K.RandomPerspective(0.2,p=0.4, ),
     K.ColorJitter(hue=0.01, saturation=0.01, p=0.7),
 
-)
+    )
 
 noise = noise_gen([1, 3, args.size[0], args.size[1]])
 image = TF.to_pil_image(noise.div(5).add(0.5).clamp(0, 1)[0])
-image.save('init3.png')
+# image.save('init3.png')
 
 
 from PIL import Image, ImageDraw
 
 if args.constraint_regions and args.init_image:
   
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    toksX, toksY = args.size[0] // 16, args.size[1] // 16
+  device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    pil_image = Image.open(args.init_image).convert('RGB')
-    pil_image = pil_image.resize((toksX * 16, toksY * 16), Image.LANCZOS)
+  toksX, toksY = args.size[0] // 16, args.size[1] // 16
 
-    width, height = pil_image.size
+  pil_image = Image.open(args.init_image).convert('RGB')
+  pil_image = pil_image.resize((toksX * 16, toksY * 16), Image.LANCZOS)
 
-    d = ImageDraw.Draw(pil_image)
-    for i in range(0,width,16):
-        d.text((i+4,0), f"{int(i/16)}", fill=(50,200,100))
-    for i in range(0,height,16):
-        d.text((4,i), f"{int(i/16)}", fill=(50,200,100))
+  width, height = pil_image.size
 
-    pil_image = TF.to_tensor(pil_image)
+  d = ImageDraw.Draw(pil_image)
+  for i in range(0,width,16):
+      d.text((i+4,0), f"{int(i/16)}", fill=(50,200,100))
+  for i in range(0,height,16):
+      d.text((4,i), f"{int(i/16)}", fill=(50,200,100))
 
-    print(pil_image.shape)
-    for i in range(pil_image.shape[1]):
-        for j in range(pil_image.shape[2]):
-            if i % 16 == 0 or j % 16 ==0:
-                pil_image[:,i,j] = 0
+  pil_image = TF.to_tensor(pil_image)
 
-    # select region
-    c_h = [16,32]
-    c_w = [0,40]
+  print(pil_image.shape)
+  for i in range(pil_image.shape[1]):
+    for j in range(pil_image.shape[2]):
+      if i%16 == 0 or j%16 ==0:
+        pil_image[:,i,j] = 0
 
-    c_hf = [i*16 for i in c_h]
-    c_wf = [i*16 for i in c_w]
+  # select region
+  c_h = [16,32]
+  c_w = [0,40]
 
-    pil_image[0,c_hf[0]:c_hf[1],c_wf[0]:c_wf[1]] = 0
+  c_hf = [i*16 for i in c_h]
+  c_wf = [i*16 for i in c_w]
 
-    TF.to_pil_image(pil_image.cpu()).save('progress_script.png')
-    display.display(display.Image('progress_script.png'))
+  pil_image[0,c_hf[0]:c_hf[1],c_wf[0]:c_wf[1]] = 0
 
-    z_mask = torch.zeros([1, 256, int(height/16), int(width/16)]).to(device)
-    z_mask[:,:,c_h[0]:c_h[1],c_w[0]:c_w[1]] = 1
+  TF.to_pil_image(pil_image.cpu()).save('progress_script.png')
+  #display.display(display.Image('progress_script.png'))
+
+  z_mask = torch.zeros([1, 256, int(height/16), int(width/16)]).to(device)
+  z_mask[:,:,c_h[0]:c_h[1],c_w[0]:c_w[1]] = 1
 
 # some hyper parameter probably doesnt have that much of an effect
 # get_mse_weight = lambda i: max(mse_weight - (mse_decay* (i/args.mse_decay_rate)),0.00)
@@ -460,6 +465,9 @@ if args.noise_prompt_weights and args.noise_prompt_seeds:
     embed = torch.empty([1, perceptor.visual.output_dim]).normal_(generator=gen)
     pMs.append(Prompt(embed, weight).to(device))
 
+if isinstance(args.prompts, str):
+    args.prompts = [args.prompts]
+
 for prompt in args.prompts:
     txt, weight, stop = parse_prompt(prompt)
     embed = perceptor.encode_text(clip.tokenize(txt).to(device)).float()
@@ -482,14 +490,22 @@ def synth(z, quantize=True):
 
     return clamp_with_grad(model.decode(z_q).add(1).div(2), 0, 1)
 
+def clean_text(text):
+    text = text.strip()
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r' ', '_', text)
+    return text
+
+
 @torch.no_grad()
-def checkin(i, losses):
+def checkin(i, losses, prompt, job_num):
+    title = clean_text(prompt)
     losses_str = ', '.join(f'{loss.item():g}' for loss in losses)
     tqdm.write(f'i: {i}, loss: {sum(losses).item():g}, losses: {losses_str}')
     out = synth(z.average, True)
 
-    TF.to_pil_image(out[0].cpu()).save('progress_2s.png')   
-    display.display(display.Image('progress_2s.png')) 
+    TF.to_pil_image(out[0].cpu()).save(f'./images_{job_num}/{title}.png')   
+    #display.display(display.Image('progress_2s.png')) 
 
 
 def ascend_txt(i):
@@ -550,8 +566,8 @@ def train(i):
     opt.zero_grad()
     lossAll = ascend_txt(i)
 
-    if i % args.display_freq == 0:
-        checkin(i, lossAll)
+    if i % args.display_freq == 0 or i == (args.max_itter - 1):
+        checkin(i, lossAll, args.prompts, args.job_num)
     
     loss = sum(lossAll)
 
@@ -563,18 +579,13 @@ i = 0
 def do_train():
     global i
     try:
-        with tqdm() as pbar:
-            while True and i != args.max_itter:
-
-                train(i)
+        for i in tqdm(range(args.max_itter)):
+            train(i)
 
                 # if i > 0 and i%args.mse_decay_rate==0 and i <= args.mse_decay_rate * args.mse_epoches:
                 #   z = EMATensor(z.average, args.ema_val)
                 #   opt = optim.Adam(z.parameters(), lr=args.step_size, weight_decay=0.00000000)
 
-                i += 1
-                print(i)
-                pbar.update()
 
     except KeyboardInterrupt:
         pass
@@ -583,8 +594,13 @@ def do_train():
 import sys
 def main():
     global args
-    args.prompts= sys.argv[1:]
+    args.prompts= sys.argv[1]
+    args.job_num = sys.argv[2]
+    seed = sys.argv[3]
+    torch.manual_seed(seed)
+    os.makedirs(f'./images_{args.job_num}/', exist_ok=True)
     do_train()
+
 
 if __name__ == "__main__":
   main()

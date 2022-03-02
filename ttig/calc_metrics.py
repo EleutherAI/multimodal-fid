@@ -1,4 +1,3 @@
-from distutils.command.build import build
 from cleanfid.fid import frechet_distance
 import numpy as np
 import os
