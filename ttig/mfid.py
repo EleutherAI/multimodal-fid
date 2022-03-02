@@ -41,10 +41,10 @@ def trace_sqrt_product(sigma, sigma_v):
     sqrt_sigma = symmetric_matrix_square_root(sigma)
     # This is sqrt(A sigma_v A) above
     sqrt_a_sigmav_a = sqrt_sigma @ (sigma_v @ sqrt_sigma)
-    return np.linalg.trace(symmetric_matrix_square_root(sqrt_a_sigmav_a))
+    return np.trace(symmetric_matrix_square_root(sqrt_a_sigmav_a))
 
 
-def mfid(y, y_hat, x):
+def multimodal_frechet_distance(y, y_hat, x):
     '''
     CFID metric implementation, according to the formula described in the paper;
     https://arxiv.org/abs/2103.11521
@@ -75,34 +75,36 @@ def mfid(y, y_hat, x):
     # assert ((y_predict.shape[0] == y_true.shape[0]) and (y_predict.shape[0] == x_true.shape[0]))
     # assert ((y_predict.shape[1] == y_true.shape[1]) and (y_predict.shape[1] == x_true.shape[1]))
     # Sample means
+    # y_dim = y.shape[1]
+    x_dim = x.shape[1]
     y_mean = np.mean(y, axis=0)
     y_hat_mean = np.mean(y_hat, axis=0)
-    x_mean = np.mean(x, axis=0)
+    # x_mean = np.mean(x, axis=0)
     # sample covariance
-    # C_ŷx
-    y_hat_x_cov = np.cov(y_hat - y_hat_mean, x - x_mean, rowvar=True)
-    # C_yx
-    y_x_cov = np.cov(y - y_mean, x - x_mean, rowvar=True)
+    # C_ŷx. size is (y_hat_dim + x_dim, y_hat_dim + x_dim)
+    y_hat_x_cov_full = np.cov(y_hat, x, rowvar=False)
+    y_hat_x_cov = y_hat_x_cov_full[:-x_dim, -x_dim:] # size is (y_hat_dim, x_dim)
     # C_xŷ
-    x_y_hat_cov = np.cov(x - x_mean, y_hat - y_hat_mean, rowvar=True)
+    x_y_hat_cov = y_hat_x_cov.T
+    # C_yx, size is (y_dim + x_dim, y_dim + x_dim)
+    y_x_cov_full = np.cov(y, x, rowvar=False) 
+    y_x_cov = y_x_cov_full[:-x_dim, -x_dim:] # size is (x_dim, y_dim)
     # C_xy
-    x_y_cov = np.cov(x - x_mean, y - y_mean, rowvar=True)
+    x_y_cov = y_x_cov.T 
     # C_ŷŷ
-    y_hat_cov = np.cov(y_hat - y_hat_mean, rowvar=True)
+    y_hat_cov = np.cov(y_hat, rowvar=False)
     # C_yy
-    y_cov = np.cov(y - y_mean, rowvar=True)
+    y_cov = np.cov(y, rowvar=False)
     # (C_xx)^(-1)
-    x_cov_inverse = np.inv(np.cov(x - x_mean, rowvar=True))
-    # y_cond_mean = y_mean + (y_x_cov @ x_cov_inverse @ np.transpose(x - x_mean))
-    # y_hat_cond_mean = y_hat_mean + (y_hat_x_cov @ x_cov_inverse @ np.transpose(x - x_mean))
-    # C_(y|x)
+    x_cov_inverse = np.linalg.pinv(np.cov(x, rowvar=False))
+    # C_(yy|x)
     y_cond_cov = y_cov - (y_x_cov @ (x_cov_inverse @ x_y_cov))
-    # C_(ŷ|x)
+    # C_(ŷŷ|x)
     y_hat_cond_cov = y_hat_cov - (y_hat_x_cov @ (x_cov_inverse @ x_y_hat_cov))
     # Distance between Gaussians
     m_dist = np.sum(np.square(y_mean - y_hat_mean))
-    cov_dist1 = np.linalg.trace(
-        (y_x_cov - y_hat_x_cov @ x_cov_inverse) @ x_y_cov - x_y_hat_cov
+    cov_dist1 = np.trace(
+        (y_x_cov - y_hat_x_cov )@ x_cov_inverse @ (x_y_cov - x_y_hat_cov)
     )
-    cov_dist2 = np.linalg.trace(y_cond_cov + y_hat_cond_cov) - 2 * trace_sqrt_product(y_cond_cov, y_hat_cond_cov)
+    cov_dist2 = np.trace(y_cond_cov + y_hat_cond_cov) - 2 * trace_sqrt_product(y_cond_cov, y_hat_cond_cov)
     return m_dist + cov_dist1 + cov_dist2
