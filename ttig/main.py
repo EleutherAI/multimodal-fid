@@ -46,7 +46,6 @@ def generate_and_save_image(captions, image_tensors, model_name):
     )
 
 
-
 @ray.remote(num_gpus=1)
 class ModelGenerator:
     def __init__(self):
@@ -102,7 +101,7 @@ def make_images(data_fp: str, num_samples: int = 524_288, batch_size: int = 4):
         
         
 @app.command()
-def mmfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_288, batch_size: int = 128):
+def mfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_288, batch_size: int = 128):
     model_name = 'vqgan_imagenet_f16_16384'
     checkpoint_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.ckpt')
     config_path = join(proj_dir, 'checkpoints', 'vqgan', f'{model_name}.yaml')
@@ -124,7 +123,7 @@ def mmfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_28
 
 
 @app.command()
-def calc_stats(name: str, folder_fp: str, num_samples: int = 500_000, batch_size: int = 128):
+def make_stats(name: str, folder_fp: str, num_samples: int = 500_000, batch_size: int = 128):
     model = MultiModalFeatureExtractor()
     model.to('cuda')
     return make_reference_statistics(

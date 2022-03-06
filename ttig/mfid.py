@@ -44,7 +44,23 @@ def trace_sqrt_product(sigma, sigma_v):
     return np.trace(symmetric_matrix_square_root(sqrt_a_sigmav_a))
 
 
-def multimodal_frechet_distance(y, y_hat, x):
+def mfid_features_to_stats(x, y):
+    x_dim = x.shape[1]
+    # Sample means
+    y_mean = np.mean(y, axis=0)
+    # x_mean = np.mean(x, axis=0)
+    # sample covariance
+    # C_ŷx. size is (y_hat_dim + x_dim, y_hat_dim + x_dim)
+    y_x_cov_full = np.cov(y, x, rowvar=False)
+    y_x_cov = y_x_cov_full[:-x_dim, -x_dim:] # size is (y_hat_dim, x_dim)
+    # C_yy
+    y_cov = np.cov(y, rowvar=False)
+    # (C_xx)^(-1)
+    x_cov = np.cov(x, rowvar=False)
+    return y_mean, y_cov, y_x_cov, x_cov
+
+
+def multimodal_frechet_distance(y1_mean, y1_cov, y1_x_cov, y2_mean, y2_cov, y2_x_cov, x_cov):
     '''
     CFID metric implementation, according to the formula described in the paper;
     https://arxiv.org/abs/2103.11521
@@ -72,39 +88,17 @@ def multimodal_frechet_distance(y, y_hat, x):
     estimator - Covariance estimator. Default is sample covariance estimator.
                 The estimator might be switched to other estimators. Remmember that other estimator must support 'invert' argument
     '''
-    # assert ((y_predict.shape[0] == y_true.shape[0]) and (y_predict.shape[0] == x_true.shape[0]))
-    # assert ((y_predict.shape[1] == y_true.shape[1]) and (y_predict.shape[1] == x_true.shape[1]))
-    # Sample means
-    # y_dim = y.shape[1]
-    x_dim = x.shape[1]
-    y_mean = np.mean(y, axis=0)
-    y_hat_mean = np.mean(y_hat, axis=0)
-    # x_mean = np.mean(x, axis=0)
-    # sample covariance
-    # C_ŷx. size is (y_hat_dim + x_dim, y_hat_dim + x_dim)
-    y_hat_x_cov_full = np.cov(y_hat, x, rowvar=False)
-    y_hat_x_cov = y_hat_x_cov_full[:-x_dim, -x_dim:] # size is (y_hat_dim, x_dim)
-    # C_xŷ
-    x_y_hat_cov = y_hat_x_cov.T
-    # C_yx, size is (y_dim + x_dim, y_dim + x_dim)
-    y_x_cov_full = np.cov(y, x, rowvar=False) 
-    y_x_cov = y_x_cov_full[:-x_dim, -x_dim:] # size is (x_dim, y_dim)
-    # C_xy
-    x_y_cov = y_x_cov.T 
-    # C_ŷŷ
-    y_hat_cov = np.cov(y_hat, rowvar=False)
-    # C_yy
-    y_cov = np.cov(y, rowvar=False)
-    # (C_xx)^(-1)
-    x_cov_inverse = np.linalg.pinv(np.cov(x, rowvar=False))
+    x_y1_cov = y1_x_cov.T
+    x_y2_cov = y2_x_cov.T
+    x_cov_inverse = np.linalg.pinv(x_cov)
     # C_(yy|x)
-    y_cond_cov = y_cov - (y_x_cov @ (x_cov_inverse @ x_y_cov))
+    y1_cond_cov = y1_cov - (y1_x_cov @ (x_cov_inverse @ x_y1_cov))
     # C_(ŷŷ|x)
-    y_hat_cond_cov = y_hat_cov - (y_hat_x_cov @ (x_cov_inverse @ x_y_hat_cov))
+    y2_cond_cov = y2_cov - (y2_x_cov @ (x_cov_inverse @ x_y2_cov))
     # Distance between Gaussians
-    m_dist = np.sum(np.square(y_mean - y_hat_mean))
+    m_dist = np.sum(np.square(y1_mean - y2_mean))
     cov_dist1 = np.trace(
-        (y_x_cov - y_hat_x_cov )@ x_cov_inverse @ (x_y_cov - x_y_hat_cov)
+        (y1_x_cov - y2_x_cov )@ x_cov_inverse @ (x_y1_cov - x_y2_cov)
     )
-    cov_dist2 = np.trace(y_cond_cov + y_hat_cond_cov) - 2 * trace_sqrt_product(y_cond_cov, y_hat_cond_cov)
+    cov_dist2 = np.trace(y1_cond_cov + y2_cond_cov) - 2 * trace_sqrt_product(y1_cond_cov, y2_cond_cov)
     return m_dist + cov_dist1 + cov_dist2
