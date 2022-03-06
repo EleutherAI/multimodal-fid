@@ -3,6 +3,7 @@ from itertools import chain
 import os
 from pathlib import Path
 from PIL import Image
+import polars as ps
 import pyarrow as pa
 import pyarrow.dataset as ds
 import polars as pl
@@ -15,11 +16,14 @@ def build_resizer(size: Tuple[int, int]):
     return make_resizer("PIL", False, "bicubic", size)
 
 
-def build_webdataset(data_fp: str, image_preprocess_fn: Callable, text_preprocess_fn: Callable):
+def build_webdataset(data_fp: str, image_preprocess_fn: Callable, text_preprocess_fn: Callable, index=None):
     data_dir = Path(data_fp)
     assert data_dir.is_dir()
+    data = wds.WebDataset([str(file) for file in data_dir.glob('*.tar')])
+    if index is not None:
+        data = data.select(lambda sample: sample['__key__'] in index)
     data = (
-        wds.WebDataset([str(file) for file in data_dir.glob('*.tar')])
+        data
         .decode('pil')
         .to_tuple('jpg;png', 'txt')
         .map_tuple(image_preprocess_fn, text_preprocess_fn)
@@ -75,8 +79,6 @@ class CoCa3mTextDataset(IterableDataset):
         iterator = [iter(batches)] * self.batch_size
         for batch in zip(*iterator):
             yield tuple(zip(*batch))
-
-
 
 
 class MuMoFolderDataset(Dataset):

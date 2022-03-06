@@ -1,4 +1,3 @@
-from cleanfid.fid import frechet_distance
 import numpy as np
 import os
 from PIL import PngImagePlugin
@@ -6,6 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset
+from ttig.mfid import mfid_features_to_stats, multimodal_frechet_distance
 from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
 from torchvision.transforms import ToTensor, Compose
 import torchvision.transforms.functional as tf
@@ -13,7 +13,6 @@ from typing import Optional, Tuple
 
 
 STATS_FOLDER = os.path.join(os.path.dirname(__file__), "stats")
-MmfidStats = Tuple[np.float32, np.ndarray]
 
 
 def feats_to_stats(features):
@@ -52,8 +51,8 @@ def calc_mmfid_from_model(
     image_size: Tuple[int, int] = (299, 299)
     os.makedirs(STATS_FOLDER, exist_ok=True)
     outname = f"{model_name}.npz"
-    outf = os.path.join(STATS_FOLDER, outname)
-    ref_mu, ref_sigma = load_reference_statistics(reference_stats_name) 
+    out_fp = os.path.join(STATS_FOLDER, outname)
+    ref_image_mean, ref_image_cov, ref_image_text_cov, _ = load_reference_statistics(reference_stats_name) 
     data_gen = make_model_generator(
         folder_fp,
         gen_model,
@@ -63,11 +62,25 @@ def calc_mmfid_from_model(
         num_samples,
         save_images
     )
-    features = calculate_features_from_generator(stats_model, data_gen)
-    mu, sigma = feats_to_stats(features)
-    print(f"Saving custom Multi-Modal FID (MMFID) stats to {outf}")
-    np.savez_compressed(outf, mu=mu, sigma=sigma)
-    mmfid = frechet_distance(mu, sigma, ref_mu, ref_sigma)
+    image_features, text_features = calculate_features_from_generator(stats_model, data_gen)
+    image_mean, image_cov, image_text_cov, text_cov = mfid_features_to_stats(image_features, text_features)
+    print(f"Saving custom Multi-Modal FID (MFID) stats to {out_fp}")
+    np.savez_compressed(
+        out_fp, 
+        image_mean=image_mean,
+        image_cov=image_cov,
+        image_text_cov=image_text_cov,
+        text_cov=text_cov
+    )
+    mmfid = multimodal_frechet_distance(
+        ref_image_mean,
+        ref_image_cov,
+        ref_image_text_cov,
+        image_mean,
+        image_cov,
+        image_text_cov,
+        text_cov
+    )
     print(mmfid)
     return mmfid
 
@@ -80,11 +93,12 @@ def calculate_features_from_generator(mumo_model, data_generator):
     :data_generator
     :returns 
     """
-    data_features = []
+    image_features = []
+    text_features = []
     for batch in tqdm(data_generator):
         images, texts = batch
         with torch.no_grad():
-            data_features.append(
+            image_embeds, text_embeds = (
                 mumo_model(
                     encoding_to_cuda(texts),
                     images.to('cuda')
@@ -93,7 +107,9 @@ def calculate_features_from_generator(mumo_model, data_generator):
                 .cpu()
                 .numpy()
             )
-    return np.concatenate(data_features)
+            image_features.append(image_embeds)
+            text_features.append(text_embeds)
+    return np.concatenate(image_features), np.concatenate(text_features)
 
 
 def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = None, image_size=(299, 299), tokenizer=None):
@@ -138,7 +154,6 @@ def make_model_generator(
     batch_size: int,
     image_size: Tuple[int, int] = (299, 299),
     num_samples: Optional[int] = None,
-    save_images: bool = True
 ):
     # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
     # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
@@ -158,7 +173,7 @@ def make_model_generator(
         )
 
 
-def load_reference_statistics(name: str) -> MmfidStats:
+def load_reference_statistics(name: str):
     ref_stat_fp = os.path.join(STATS_FOLDER, f'{name}.npz')
     if not os.path.exists(ref_stat_fp):
         raise ValueError(f'No reference statistics for {name}')
@@ -178,15 +193,21 @@ def make_reference_statistics(name: str, model, folder_fp: str, num_samples: int
     """
     os.makedirs(STATS_FOLDER, exist_ok=True)
     outname = f"{name}.npz"
-    outf = os.path.join(STATS_FOLDER, outname)
+    out_fp = os.path.join(STATS_FOLDER, outname)
     # if the custom stat file already exists
-    if os.path.exists(outf):
+    if os.path.exists(out_fp):
         msg = f'The statistics file {name} already exists.\n'
         msg += f'Run `rm {os.path.abspath(name)}` to remove it.'
         raise ValueError(msg)
     # get all inception features for folder images
     data_gen = make_folder_generator(folder_fp, batch_size, num_samples)
-    features = calculate_features_from_generator(model, data_gen)
-    mu, sigma = feats_to_stats(features)
-    print(f"Saving custom Multi-Modal FID (MMFID) stats to {outf}")
-    np.savez_compressed(outf, mu=mu, sigma=sigma)
+    image_features, text_features = calculate_features_from_generator(model, data_gen)
+    image_mean, image_cov, image_text_cov, text_cov = mfid_features_to_stats(image_features, text_features)
+    print(f"Saving custom Multi-Modal FID (MMFID) stats to {out_fp}")
+    np.savez_compressed(
+        out_fp, 
+        image_mean=image_mean,
+        image_cov=image_cov,
+        image_text_cov=image_text_cov,
+        text_cov=text_cov
+    )
