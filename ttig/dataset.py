@@ -1,9 +1,11 @@
 from cleanfid.resize import make_resizer
 from itertools import chain
+import os
 from pathlib import Path
 from PIL import Image
 import pyarrow as pa
 import pyarrow.dataset as ds
+import polars as pl
 from torch.utils.data import Dataset, IterableDataset
 from typing import Any, Callable, Tuple
 import webdataset as wds
@@ -23,6 +25,27 @@ def build_webdataset(data_fp: str, image_preprocess_fn: Callable, text_preproces
         .map_tuple(image_preprocess_fn, text_preprocess_fn)
     )
     return data
+
+
+class CfidDataset(Dataset):
+
+    def __init__(self, folder_fp, image_preprocess_fn: Callable, text_preprocess_fn: Callable, batch_size=128):
+        super().__init__()
+        self.batch_size = batch_size
+        self.folder_fp = folder_fp
+        self.data = pl.read_parquet(f'{folder_fp}/index.parquet')
+        self.image_fn = image_preprocess_fn
+        self.text_fn = text_preprocess_fn
+    
+    def __len__(self):
+        return self.data.shape[0]
+
+    def image_fp(self, group, key):
+        return os.path.join(self.folder_fp, group, f'{key}.jpg')
+    
+    def __getitem__(self, index):
+        group, key, caption = self.data.row(index)
+        image = self.image_fn(Image.open(f'{self.image_fp(group, key)}'))
 
 
 class CoCa3mTextDataset(IterableDataset):

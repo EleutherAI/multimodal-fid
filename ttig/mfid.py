@@ -72,10 +72,7 @@ def multimodal_frechet_distance(y, y_hat, x):
     estimator - Covariance estimator. Default is sample covariance estimator.
                 The estimator might be switched to other estimators. Remmember that other estimator must support 'invert' argument
     '''
-    # assert ((y_predict.shape[0] == y_true.shape[0]) and (y_predict.shape[0] == x_true.shape[0]))
-    # assert ((y_predict.shape[1] == y_true.shape[1]) and (y_predict.shape[1] == x_true.shape[1]))
     # Sample means
-    # y_dim = y.shape[1]
     x_dim = x.shape[1]
     y_mean = np.mean(y, axis=0)
     y_hat_mean = np.mean(y_hat, axis=0)
