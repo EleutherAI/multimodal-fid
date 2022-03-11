@@ -9,7 +9,7 @@ proj_dir = dirname(test_dir)
 sys.path.append(test_dir) # fucking cursed
 warnings.filterwarnings("ignore", category=DeprecationWarning) 
 
-from ttig.mmfid import make_folder_generator, make_model_generator
+from ttig.calc_metrics import make_folder_generator, make_model_generator
 from ttig.models.vqgan_clip import VqGanClipGenerator, VQGANConfig
 
 
