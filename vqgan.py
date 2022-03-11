@@ -504,7 +504,9 @@ def checkin(i, losses, prompt, job_num):
     tqdm.write(f'i: {i}, loss: {sum(losses).item():g}, losses: {losses_str}')
     out = synth(z.average, True)
 
-    TF.to_pil_image(out[0].cpu()).save(f'./images_{job_num}/{title}.png')   
+    TF.to_pil_image(out[0].cpu()).save(f'./figures/{title}/{job_num}.png')
+    with open(f'./figures/{title}/{job_num}.txt', mode='w') as txtfile:
+        txtfile.write(prompt)   
     #display.display(display.Image('progress_2s.png')) 
 
 
@@ -596,8 +598,6 @@ def main():
     global args
     args.prompts= sys.argv[1]
     args.job_num = sys.argv[2]
-    seed = sys.argv[3]
-    torch.manual_seed(seed)
     os.makedirs(f'./images_{args.job_num}/', exist_ok=True)
     do_train()
 
