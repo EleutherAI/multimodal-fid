@@ -503,7 +503,7 @@ def checkin(i, losses, prompt, job_num):
     losses_str = ', '.join(f'{loss.item():g}' for loss in losses)
     tqdm.write(f'i: {i}, loss: {sum(losses).item():g}, losses: {losses_str}')
     out = synth(z.average, True)
-
+    os.makedirs(f'./figures/{title}', exist_ok=True)
     TF.to_pil_image(out[0].cpu()).save(f'./figures/{title}/{job_num}.png')
     with open(f'./figures/{title}/{job_num}.txt', mode='w') as txtfile:
         txtfile.write(prompt)   

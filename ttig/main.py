@@ -11,7 +11,8 @@ from torch.utils.data import DataLoader
 from torchvision.transforms.functional import to_pil_image
 import ttig
 from ttig.dataset import CoCa3mTextDataset
-from ttig.calc_metrics import make_reference_statistics, calc_mmfid_from_model
+from ttig.calc_metrics import make_reference_statistics, calc_mfid_from_model, load_reference_statistics
+from ttig.mfid import multimodal_frechet_distance
 from ttig.models.model import MultiModalFeatureExtractor
 from ttig.models.vqgan_clip import VqGanClipGenerator, VQGANConfig
 from tqdm import tqdm
@@ -110,7 +111,7 @@ def mfid(data_fp: str, ref_stats_name='coco3m_total', num_samples: int = 524_288
     stats_model.to('cuda')
     vqgan = VqGanClipGenerator(checkpoint_path, config_path, config)
     vqgan.to('cuda')
-    calc_mmfid_from_model(
+    calc_mfid_from_model(
         data_fp,
         vqgan,
         stats_model,
@@ -133,6 +134,23 @@ def make_stats(name: str, folder_fp: str, num_samples: int = 500_000, batch_size
         num_samples,
         batch_size
     )
+
+
+
+@app.command()
+def mfid_from_stats(name1, name2):
+    im_mean1, im_cov1, im_text_cov1, text_cov1 = load_reference_statistics(name1)
+    im_mean2, im_cov2, im_text_cov2, _ = load_reference_statistics(name2)
+    mfid = multimodal_frechet_distance(
+        im_mean1,
+        im_cov1,
+        im_text_cov1,
+        im_mean2,
+        im_cov2,
+        im_text_cov2,
+        text_cov1
+    )
+    print(f'Frechet Distance between {name1} and {name2} is: {mfid}')
 
 
 if __name__ == '__main__':

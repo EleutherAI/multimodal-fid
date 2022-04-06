@@ -4,7 +4,7 @@ from PIL import PngImagePlugin
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset
+from ttig.dataset import build_resizer, build_webdataset, CoCa3mTextDataset, MfidDataset
 from ttig.mfid import mfid_features_to_stats, multimodal_frechet_distance
 from ttig.models.sentence_transformer import build_tokenizer, encoding_to_cuda
 from torchvision.transforms import ToTensor, Compose
@@ -14,16 +14,15 @@ from typing import Optional, Tuple
 
 STATS_FOLDER = os.path.join(os.path.dirname(__file__), "stats")
 
-
+"""
 def feats_to_stats(features):
-    """
-    Calculates the mean `mu` and covariance matrix `sigma` of a multimodal dataset.
-    :features 
-    """
+    #Calculates the mean `mu` and covariance matrix `sigma` of a multimodal dataset.
+    #:features 
+    
     mu = np.mean(features, axis=0)
     sigma = np.cov(features, rowvar=False)
     return mu, sigma
-
+"""
 
 def generate_and_save_images(model, captions, keys, model_name):
     image_tensors = model.generate(captions)
@@ -38,7 +37,7 @@ def generate_and_save_images(model, captions, keys, model_name):
     return captions, images
 
 
-def calc_mmfid_from_model(
+def calc_mfid_from_model(
     folder_fp: str,
     gen_model,
     stats_model,
@@ -93,47 +92,40 @@ def calculate_features_from_generator(mumo_model, data_generator):
     :data_generator
     :returns 
     """
+    tokenizer = build_tokenizer()
     image_features = []
     text_features = []
     for batch in tqdm(data_generator):
         images, texts = batch
+        texts = tokenizer(texts, padding='longest', truncation=True, return_tensors='pt')
+        # print(images.shape)
         with torch.no_grad():
-            image_embeds, text_embeds = (
-                mumo_model(
+            image_embeds, text_embeds = mumo_model(
                     encoding_to_cuda(texts),
                     images.to('cuda')
                 )
-                .detach()
-                .cpu()
-                .numpy()
-            )
-            image_features.append(image_embeds)
-            text_features.append(text_embeds)
+            image_features.append(image_embeds.detach().cpu().numpy())
+            text_features.append(text_embeds.detach().cpu().numpy())
     return np.concatenate(image_features), np.concatenate(text_features)
 
 
 def make_folder_generator(folder_fp, batch_size, num_samples: Optional[int] = None, image_size=(299, 299), tokenizer=None):
     # For some reason their pipeline involves loading data as an np.ndarray, converting to an image, and converting back
     # TODO: there has gotta be a better way to do that, but for now I wanna rely on their implementation being correct
-    image_fn = Compose([np.asarray, build_resizer(image_size), ToTensor()])
+    def check_array(image):
+        array = np.asarray(image)
+        print(array.shape)
+        return array
+    image_fn = Compose([build_resizer(image_size), ToTensor()])
     tokenizer = tokenizer if tokenizer is not None else build_tokenizer()
-    def ident(x):
-        return x
-    dataset = build_webdataset(
+    dataset = MfidDataset(
         folder_fp,
         image_fn,
-        ident
-    )
-    dataset = dataset.shuffle(1000)
-    if num_samples is not None:
-        dataset = dataset.slice(num_samples)
-    dataset = dataset.batched(batch_size).map_tuple(
-        ident, 
         lambda sents: tokenizer(sents, padding='longest', truncation=True, return_tensors='pt')
     )
     return DataLoader(
         dataset,
-        batch_size=None,
+        batch_size=batch_size,
         pin_memory=True
     )
 
@@ -178,8 +170,11 @@ def load_reference_statistics(name: str):
     if not os.path.exists(ref_stat_fp):
         raise ValueError(f'No reference statistics for {name}')
     stats = np.load(ref_stat_fp)
-    mu, sigma = stats["mu"], stats["sigma"]
-    return mu, sigma
+    image_mean = stats["image_mean"]
+    image_cov = stats["image_cov"]
+    image_text_cov = stats["image_text_cov"]
+    text_cov = stats["text_cov"]
+    return image_mean, image_cov, image_text_cov, text_cov
 
 
 def make_reference_statistics(name: str, model, folder_fp: str, num_samples: int, batch_size: int) -> None:
