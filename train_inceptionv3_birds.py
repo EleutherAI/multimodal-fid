@@ -4,6 +4,7 @@ from omegaconf import OmegaConf
 import timm
 from timm.loss import LabelSmoothingCrossEntropy
 import torch
+from torch import optim
 from torch.utils.data import DataLoader, RandomSampler
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import Compose, GaussianBlur, RandomRotation, ToTensor
@@ -46,37 +47,40 @@ def eval(model, data, device, config):
             losses.append(loss_fn(model(images.to(device)), target.to(device)).unsqueeze(0))
     loss = torch.mean(torch.cat(losses))
     wandb.log({'loss/test': loss})
+    return loss.item()
     
 
 def train(model, data_dir, config):
     device = 'cuda:0'
     model = model.to(device)
     loss_fn = LabelSmoothingCrossEntropy(config.train.label_smoothing)
-    optim = torch.optim.Adam(model.parameters())
+    opt = optim.Adam(model.parameters(), lr=config.train.learning_rate)
+    scheduler = optim.lr_scheduler.ExponentialLR(opt, gamma=config.train.lr_decay)
     train_data, eval_data = get_dataloaders(data_dir, config)
-    # TODO 1. LR Scheduler
-    # TODO 2. Distributed Data Parallel
-    # TODO 5. Model checkpointing
-    for epoch in range(config.train.num_epochs):
-        print('#####################################################')
+    # TODO 1. Distributed Data Parallel
+    # TODO 2. Model checkpointing
+    for epoch in range(config.num_epochs):
+        print('\n#####################################################')
         print(f'######Epoch {epoch}')
         print('####################################################')
-        for i, batch in tqdm(enumerate(train_data)):
+        for i, batch in enumerate(tqdm(train_data))):
             images, target = batch
             predictions = model(images.to(device))
             target = target.to(device)
             loss = loss_fn(predictions, target.to(device))
             loss.backward()
-            optim.step()
+            opt.step()
+            scheduler.step()
             wandb.log({'loss/train': loss})
-            
-            if i % config.train.eval_interval:
+            if i % config.eval_interval:
+                train_loss = loss.item()
                 predictions.detach(), target.detach()
                 predictions.to('cpu'), images.to('cpu')
                 try:
-                    eval(model, eval_data, device, config)
+                    eval_loss = eval(model, eval_data, device, config)
                 finally:
                     model.train()
+                tqdm.write(f'Batch {i} train loss: {train_loss:.3f} || test loss {eval_loss:.3f}')
             
             
 if __name__ == '__main__':
@@ -90,5 +94,4 @@ if __name__ == '__main__':
         name=args.run_name
     )
     wandb.config.update(OmegaConf.to_container(config))
-    # wandb.config.update(args)
     train(model, Path(args.data_dir), config)
