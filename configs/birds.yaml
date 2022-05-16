@@ -1,0 +1,7 @@
+data:
+    num_classes: 400
+train:
+    eval_interval: 50
+    num_epochs: 10
+    batch_size: 128 
+    label_smoothing: 0.1
