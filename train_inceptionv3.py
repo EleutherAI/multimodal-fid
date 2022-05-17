@@ -1,9 +1,11 @@
 from argparse import ArgumentParser
 from pathlib import Path
 from omegaconf import OmegaConf
+import os
 import timm
 from timm.loss import LabelSmoothingCrossEntropy
 import torch
+from torch.nn.parallel import DistributedDataParallel
 from torch import optim
 from torch.utils.data import DataLoader, RandomSampler
 from torchvision.datasets import ImageFolder
@@ -23,7 +25,6 @@ parser.add_argument('--seed', type=int, default=31415926)
 def get_dataloaders(data_dir, config):
     transforms = Compose((
         ToTensor(),
-        # Resize(224, 224),
         GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 5)),
         RandomRotation((0, 180))
     ))
@@ -32,8 +33,8 @@ def get_dataloaders(data_dir, config):
     tsampler = RandomSampler(train_data)
     esampler = RandomSampler(eval_data)
     return (
-        DataLoader(train_data, batch_size=config.train.batch_size, sampler=tsampler),
-        DataLoader(eval_data, batch_size=config.train.batch_size, sampler=esampler)
+        DataLoader(train_data, batch_size=config.batch_size, sampler=tsampler),
+        DataLoader(eval_data, batch_size=config.batch_size, sampler=esampler)
     )
 
 
@@ -58,12 +59,12 @@ def train(model, data_dir, config):
     scheduler = optim.lr_scheduler.ExponentialLR(opt, gamma=config.train.lr_decay)
     train_data, eval_data = get_dataloaders(data_dir, config)
     # TODO 1. Distributed Data Parallel
-    # TODO 2. Model checkpointing
+    i = 0
     for epoch in range(config.num_epochs):
         print('\n#####################################################')
         print(f'######Epoch {epoch}')
-        print('####################################################')
-        for i, batch in enumerate(tqdm(train_data))):
+        print('#####################################################')
+        for batch in tqdm(train_data):
             images, target = batch
             predictions = model(images.to(device))
             target = target.to(device)
@@ -72,7 +73,7 @@ def train(model, data_dir, config):
             opt.step()
             scheduler.step()
             wandb.log({'loss/train': loss})
-            if i % config.eval_interval:
+            if i % config.eval_interval == 0 and i > 0:
                 train_loss = loss.item()
                 predictions.detach(), target.detach()
                 predictions.to('cpu'), images.to('cpu')
@@ -80,11 +81,22 @@ def train(model, data_dir, config):
                     eval_loss = eval(model, eval_data, device, config)
                 finally:
                     model.train()
-                tqdm.write(f'Batch {i} train loss: {train_loss:.3f} || test loss {eval_loss:.3f}')
+                tqdm.write(f'Batch {i} || train loss {train_loss:.3f} || test loss {eval_loss:.3f}')
+            if i % config.save_interval == 0 and i > 0:
+                torch.save(
+                    {
+                        'model': model,
+                        'optimizer': opt,
+                        'rng_state': torch.random.get_rng_state() 
+                    },
+                    f'./checkpoints/{config.name}/ckpt_{i}.pt'
+                )
+            i += 1
             
             
 if __name__ == '__main__':
     args, _ = parser.parse_known_args()
+    torch.manual_seed(args.seed)
     config = OmegaConf.load(args.config)
     model = timm.create_model('inception_v3', pretrained=False, in_chans=3, num_classes=config.data.num_classes)
     wandb.login(key=args.api_key)
@@ -93,5 +105,7 @@ if __name__ == '__main__':
         project='multimodal-fid',
         name=args.run_name
     )
+    os.makedirs(f'checkpoints/{args.run_name}')
+    config.name = args.run_name
     wandb.config.update(OmegaConf.to_container(config))
     train(model, Path(args.data_dir), config)
