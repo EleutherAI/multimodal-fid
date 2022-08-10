@@ -13,3 +13,4 @@ dependencies:
     - timm
     - tqdm
     - wandb
+    - webdataset
