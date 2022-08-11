@@ -8,7 +8,7 @@ dependencies:
   - pip>=22
   - pytorch>=1.10
   - torchvision
-  pip:
+  - pip:
     - omegaconf
     - timm
     - tqdm
