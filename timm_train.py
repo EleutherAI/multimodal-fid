@@ -15,6 +15,7 @@ NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
 Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
 """
 import argparse
+from braceexpand import braceexpand
 import time
 import yaml
 import os
@@ -22,15 +23,18 @@ import logging
 from collections import OrderedDict
 from contextlib import suppress
 from datetime import datetime
+import webdataset as wds
 
 import torch
 import torch.nn as nn
 import torchvision.utils
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
+from timm.data.transforms_factory import create_transform
 from timm.data import create_dataset, create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset
 from timm.models import create_model, safe_model_name, resume_checkpoint, load_checkpoint,\
     convert_splitbn_model, model_parameters
+from timm.data.auto_augment import auto_augment_transform
 """
 from timm.utils import setup_default_logging, random_seed, set_jit_fuser, ModelEmaV2,\
     get_outdir, CheckpointSaver, distribute_bn, update_summary, accuracy, AverageMeter,\
@@ -65,6 +69,7 @@ try:
     has_wandb = True
 except ImportError:
     has_wandb = False
+
 
 import warnings
 # Too many warnings from Pillow and (crucially) some unknown place in timm
@@ -345,6 +350,87 @@ def _parse_args():
     return args, args_text
 
 
+def log_and_continue(exn):
+    """Call in an exception handler to ignore any exception, isssue a warning, and continue."""
+    logging.warning(f'Handling webdataset error ({repr(exn)}). Ignoring.')
+    return True
+
+
+def identity(x):
+    return x
+
+
+def make_loader(s3_url, data_config, args, num_aug_splits, is_training):
+    train_interpolation = args.train_interpolation
+    if args.no_aug or not train_interpolation:
+        train_interpolation = data_config['interpolation']
+    re_num_splits = 0
+    if args.re_split:
+        # apply RE to second half of batch if no aug split otherwise line up with aug split
+        re_num_splits = num_aug_splits or 2
+    transform_fn = create_transform(
+        input_size=data_config['input_size'],
+        is_training=is_training,
+        use_prefetcher=args.prefetcher,
+        no_aug=args.no_aug,
+        re_prob=args.reprob,
+        re_mode=args.remode,
+        re_count=args.recount,
+        re_split=args.resplit,
+        scale=args.scale,
+        ratio=args.ratio,
+        hflip=args.hflip,
+        vflip=args.vflip,
+        color_jitter=args.color_jitter,
+        auto_augment=args.aa,
+        num_aug_repeats=args.aug_repeats,
+        interpolation=train_interpolation,
+        mean=data_config['mean'],
+        std=data_config['std'],
+        re_num_splits=re_num_splits,
+        separate=num_aug_splits > 0,
+    )
+    urls = braceexpand(s3_url)
+
+    if isinstance(urls, str) and urls.startswith("fake:"):
+        xs = torch.randn((args.batch_size, 3, 224, 224))
+        ys = torch.zeros(args.batch_size, dtype=torch.int64)
+        return wds.MockDataset((xs, ys), 10000)
+
+    if is_training:
+        dataset_size = 1281167
+        shuffle = 5000
+    else:
+        dataset_size = 5000
+        shuffle = 0
+
+    #transform = self.make_transform(mode=mode)
+
+    dataset = (
+        wds.WebDataset(urls)
+        .shuffle(shuffle)
+        .decode("pil")
+        .to_tuple("jpg;png;jpeg cls")
+        .map_tuple(transform_fn, identity)
+        .batched(args.batch_size, partial=False)
+    )
+
+    loader = wds.WebLoader(
+        dataset,
+        batch_size=None,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+
+    loader.length = dataset_size // args.batch_size
+
+    if is_training:
+        # ensure same number of batches in all clients
+        loader = loader.ddp_equalize(dataset_size // args.batch_size)
+        # print("# loader length", len(loader))
+    return loader
+
+
 def main():
     setup_default_logging()
     args, args_text = _parse_args()
@@ -521,6 +607,7 @@ def main():
     if args.local_rank == 0:
         _logger.info('Scheduled epochs: {}'.format(num_epochs))
 
+    """
     # create the train and eval datasets
     dataset_train = create_dataset(
         args.dataset, root=args.data_dir, split=args.train_split, is_training=True,
@@ -533,6 +620,7 @@ def main():
         class_map=args.class_map,
         download=args.dataset_download,
         batch_size=args.batch_size)
+    """
 
     # setup mixup / cutmix
     collate_fn = None
@@ -557,6 +645,12 @@ def main():
     train_interpolation = args.train_interpolation
     if args.no_aug or not train_interpolation:
         train_interpolation = data_config['interpolation']
+
+    loader_train = make_loader(args.s3_train_url, data_config, args, num_aug_splits, True)
+    loader_eval = make_loader(args.s3_val_url, data_config, args, num_aug_splits, False)
+
+
+    """
     loader_train = create_loader(
         dataset_train,
         input_size=data_config['input_size'],
@@ -601,6 +695,8 @@ def main():
         crop_pct=data_config['crop_pct'],
         pin_memory=args.pin_mem,
     )
+    """
+
 
     # setup loss function
     if args.jsd_loss:

@@ -1,7 +1,6 @@
 name: timm
 channels:
   - pytorch
-  - moasaicml
   - conda-forge
   - defaults
 dependencies:
@@ -9,12 +8,12 @@ dependencies:
   - pip>=22
   - pytorch>=1.10
   - torchvision
-  - mosaicml
   - pip:
     - braceexpand
     - omegaconf
     - polars
+    - PyYaml
     - timm
     - tqdm
     - wandb
-    - webdatasets
+    - webdataset
