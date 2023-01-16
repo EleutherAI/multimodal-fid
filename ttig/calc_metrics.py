@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from PIL import PngImagePlugin
+from PIL import Image
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
