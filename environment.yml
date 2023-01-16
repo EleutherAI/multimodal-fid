@@ -1,4 +1,4 @@
-name: ttig
+name: mfid
 channels:
   - pytorch
   - huggingface
